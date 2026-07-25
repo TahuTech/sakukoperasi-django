@@ -2,7 +2,7 @@ from django import forms
 from django.contrib import admin
 from django.core.exceptions import ValidationError
 from django.utils.html import format_html
-from .models import Member, Savings, SavingsTransaction
+from .models import Jaminan, Member, Savings, SavingsTransaction
 
 
 def format_rupiah(amount):
@@ -28,11 +28,14 @@ class MemberAdmin(admin.ModelAdmin):
             'description': 'Nomor ID otomatis dihasilkan sistem',
             'classes': ('collapse',),
         }),
-        ('Jaminan', {
-            'fields': ('guaranted_id',),
-            'classes': ('collapse',),
-        }),
     )
+
+
+@admin.register(Jaminan)
+class JaminanAdmin(admin.ModelAdmin):
+    list_display = ('member', 'jenis_penjamin', 'created_at')
+    list_filter = ('jenis_penjamin', 'created_at')
+    search_fields = ('member__id_member', 'member__name', 'keterangan')
 
 
 class SavingsAddForm(forms.ModelForm):
