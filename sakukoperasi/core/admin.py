@@ -2,7 +2,7 @@ from django import forms
 from django.contrib import admin
 from django.core.exceptions import ValidationError
 from django.utils.html import format_html
-from .models import Jaminan, Member, Savings, SavingsTransaction
+from .models import Jaminan, LoanRateTable, LoanRule, Member, MonthlyLoan, Savings, SavingsTransaction
 
 
 def format_rupiah(amount):
@@ -29,6 +29,69 @@ class MemberAdmin(admin.ModelAdmin):
             'classes': ('collapse',),
         }),
     )
+
+
+@admin.register(LoanRule)
+class LoanRuleAdmin(admin.ModelAdmin):
+    list_display = ('loan_type', 'max_loan_amount', 'max_installments', 'interest_rate')
+    list_filter = ('loan_type',)
+
+
+@admin.register(LoanRateTable)
+class LoanRateTableAdmin(admin.ModelAdmin):
+    list_display = ('loan_rule', 'loan_amount', 'installment_count', 'installment_amount', 'admin_fee')
+    list_filter = ('loan_rule__loan_type',)
+    search_fields = ('loan_rule__loan_type',)
+
+
+@admin.register(Jaminan)
+class JaminanAdmin(admin.ModelAdmin):
+    list_display = ('member', 'jenis_penjamin', 'created_at')
+    list_filter = ('jenis_penjamin', 'created_at')
+    search_fields = ('member__id_member', 'member__name', 'keterangan')
+
+
+@admin.register(MonthlyLoan)
+class MonthlyLoanAdmin(admin.ModelAdmin):
+    list_display = (
+        'formatted_loan_number',
+        'member',
+        'loan_date',
+        'loan_amount',
+        'installment_amount',
+        'installment_duration',
+        'status',
+    )
+    list_filter = ('status', 'loan_date', 'created_at')
+    search_fields = ('member__id_member', 'member__name', 'loan_number', 'jaminan__id')
+    readonly_fields = ('loan_number', 'loan_amount', 'installment_amount', 'installment_duration', 'created_at', 'updated_at')
+    autocomplete_fields = ('member', 'loan_rate_table', 'jaminan')
+
+    fieldsets = (
+        ('Relasi Data', {
+            'fields': ('member', 'jaminan', 'loan_rate_table'),
+            'description': 'Nomor anggota tetap menjadi relasi utama, dan jaminan harus milik anggota yang sama.',
+        }),
+        ('Informasi Pinjaman', {
+            'fields': ('loan_number', 'loan_date', 'status'),
+        }),
+        ('Nilai Turunan Dari Daftar Pinjaman', {
+            'fields': ('loan_amount', 'installment_amount', 'installment_duration'),
+            'description': 'Field ini otomatis mengikuti pilihan daftar pinjaman bulanan.',
+        }),
+        ('Metadata', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',),
+        }),
+    )
+
+    def formatted_loan_number(self, obj):
+        return f"PB-{obj.loan_number:06d}"
+    formatted_loan_number.short_description = 'No. Pinjaman'
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        return qs.select_related('member', 'loan_rate_table', 'jaminan')
 
 
 @admin.register(Jaminan)
