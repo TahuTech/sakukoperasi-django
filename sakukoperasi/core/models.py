@@ -24,15 +24,6 @@ class Member(models.Model):
     name = models.CharField(max_length=255, verbose_name='Nama')
     address = models.TextField(verbose_name='Alamat')
     phone_number = models.CharField(max_length=20, verbose_name='Nomor Telepon')
-    guaranted_id = models.ForeignKey(
-        'self',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='guaranteed_members',
-        verbose_name='Jaminan dari',
-    )
-
     def __str__(self):
         return f"{self.id_member} - {self.name}"
     
@@ -152,12 +143,45 @@ class LoanRateTable(models.Model):
             f"{self.loan_amount} / {self.installment_count}x "
             f"→ angsuran {self.installment_amount}, admin {self.admin_fee}"
         )
+
+
+class Jaminan(models.Model):
+    class JenisPenjamin(models.TextChoices):
+        BPKB = 'bpkb', 'BPKB'
+        SURAT_TANAH = 'surat_tanah', 'Surat Tanah'
+        LAINNYA = 'lainnya', 'Lainnya'
+
+    member = models.ForeignKey(
+        Member,
+        on_delete=models.CASCADE,
+        related_name='jaminan',
+        verbose_name='Anggota',
+    )
+    jenis_penjamin = models.CharField(
+        max_length=20,
+        choices=JenisPenjamin.choices,
+        verbose_name='Jenis Penjamin',
+    )
+    keterangan = models.TextField(
+        blank=True,
+        verbose_name='Keterangan',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.member.id_member} - {self.get_jenis_penjamin_display()}"
+
+    class Meta:
+        verbose_name = 'Jaminan'
+        verbose_name_plural = 'Jaminan'
+
+
 class Savings(models.Model):
     """Akun tabungan anggota."""
     member = models.OneToOneField(
         Member,
         on_delete=models.CASCADE,
-        related_name='savings',
+        related_name='tabungan',
     )
     balance = models.DecimalField(
         max_digits=15,
