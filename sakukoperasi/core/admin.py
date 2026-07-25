@@ -94,13 +94,6 @@ class MonthlyLoanAdmin(admin.ModelAdmin):
         return qs.select_related('member', 'loan_rate_table', 'jaminan')
 
 
-@admin.register(Jaminan)
-class JaminanAdmin(admin.ModelAdmin):
-    list_display = ('member', 'jenis_penjamin', 'created_at')
-    list_filter = ('jenis_penjamin', 'created_at')
-    search_fields = ('member__id_member', 'member__name', 'keterangan')
-
-
 class SavingsAddForm(forms.ModelForm):
     """Form tambah Tabungan: hanya tampilkan anggota yang belum punya tabungan."""
 
