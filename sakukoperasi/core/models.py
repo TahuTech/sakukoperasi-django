@@ -266,7 +266,7 @@ class Savings(models.Model):
     member = models.OneToOneField(
         Member,
         on_delete=models.CASCADE,
-        related_name='savings',
+        related_name='tabungan',
     )
     balance = models.DecimalField(
         max_digits=15,
