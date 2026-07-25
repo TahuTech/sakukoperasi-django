@@ -24,14 +24,6 @@ class Member(models.Model):
     name = models.CharField(max_length=255, verbose_name='Nama')
     address = models.TextField(verbose_name='Alamat')
     phone_number = models.CharField(max_length=20, verbose_name='Nomor Telepon')
-    guaranted_id = models.ForeignKey(
-        'self',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='guaranteed_members',
-        verbose_name='Jaminan dari',
-    )
 
     def __str__(self):
         return f"{self.id_member} - {self.name}"
@@ -152,6 +144,123 @@ class LoanRateTable(models.Model):
             f"{self.loan_amount} / {self.installment_count}x "
             f"→ angsuran {self.installment_amount}, admin {self.admin_fee}"
         )
+
+
+class Jaminan(models.Model):
+    class JenisPenjamin(models.TextChoices):
+        BPKB = 'bpkb', 'BPKB'
+        SURAT_TANAH = 'surat_tanah', 'Surat Tanah'
+        LAINNYA = 'lainnya', 'Lainnya'
+
+    member = models.ForeignKey(
+        Member,
+        on_delete=models.CASCADE,
+        related_name='jaminan',
+        verbose_name='Nomor Anggota',
+    )
+    jenis_penjamin = models.CharField(
+        max_length=20,
+        choices=JenisPenjamin.choices,
+        verbose_name='Jenis Penjamin',
+    )
+    keterangan = models.TextField(
+        blank=True,
+        verbose_name='Keterangan',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.member.id_member} - {self.get_jenis_penjamin_display()}"
+
+    class Meta:
+        verbose_name = 'Jaminan'
+        verbose_name_plural = 'Jaminan'
+
+
+class MonthlyLoan(models.Model):
+    class LoanStatus(models.TextChoices):
+        PROSES = 'proses', 'Proses'
+        LUNAS = 'lunas', 'Lunas'
+        TELAT = 'telat', 'Telat'
+
+    loan_number = models.PositiveIntegerField(
+        unique=True,
+        editable=False,
+        verbose_name='Nomor Pinjaman Bulanan',
+    )
+    member = models.ForeignKey(
+        Member,
+        on_delete=models.CASCADE,
+        related_name='monthly_loans',
+        verbose_name='Nomor Anggota',
+    )
+    loan_rate_table = models.ForeignKey(
+        LoanRateTable,
+        on_delete=models.PROTECT,
+        related_name='monthly_loans',
+        verbose_name='Daftar Pinjaman Bulanan',
+    )
+    jaminan = models.ForeignKey(
+        Jaminan,
+        on_delete=models.PROTECT,
+        related_name='monthly_loans',
+        verbose_name='ID Jaminan',
+    )
+    loan_date = models.DateField(verbose_name='Tanggal Peminjaman')
+    installment_amount = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        editable=False,
+        verbose_name='Jumlah Angsuran',
+    )
+    loan_amount = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        editable=False,
+        verbose_name='Jumlah Pinjaman',
+    )
+    installment_duration = models.PositiveIntegerField(
+        editable=False,
+        verbose_name='Lama Angsuran',
+    )
+    status = models.CharField(
+        max_length=10,
+        choices=LoanStatus.choices,
+        default=LoanStatus.PROSES,
+        verbose_name='Status Pinjaman',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def clean(self):
+        if self.loan_rate_table and self.loan_rate_table.loan_rule.loan_type != LoanRule.LoanType.MONTHLY:
+            raise ValidationError('Pinjaman bulanan hanya boleh memakai LoanRule tipe bulanan.')
+
+        if self.member_id and self.jaminan_id and self.jaminan.member_id != self.member_id:
+            raise ValidationError('ID jaminan harus milik anggota yang sama dengan nomor anggota pinjaman.')
+
+    def save(self, *args, **kwargs):
+        if not self.loan_number:
+            max_loan_number = MonthlyLoan.objects.aggregate(max_number=Max('loan_number'))['max_number'] or 0
+            self.loan_number = max_loan_number + 1
+
+        if self.loan_rate_table_id:
+            self.loan_amount = self.loan_rate_table.loan_amount
+            self.installment_amount = self.loan_rate_table.installment_amount
+            self.installment_duration = self.loan_rate_table.installment_count
+
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"PB-{self.loan_number:06d} - {self.member.id_member} - {self.get_status_display()}"
+
+    class Meta:
+        ordering = ['-loan_date', '-created_at']
+        verbose_name = 'Pinjaman Bulanan'
+        verbose_name_plural = 'Pinjaman Bulanan'
+
+
 class Savings(models.Model):
     """Akun tabungan anggota."""
     member = models.OneToOneField(
