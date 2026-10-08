@@ -1,10 +1,15 @@
 import threading
 from datetime import date
 from decimal import Decimal
+from io import StringIO
 
+from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Permission
 from django.core.exceptions import ValidationError
+from django.core.management import CommandError, call_command
 from django.db import connection
 from django.test import TestCase, TransactionTestCase
+from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
 
 from .models import Jaminan, LoanRateTable, LoanRule, Member, MonthlyLoan, Savings, SavingsTransaction
@@ -130,6 +135,8 @@ class MonthlyLoanTests(TestCase):
 class ApiValidationTests(TestCase):
     def setUp(self):
         self.client = APIClient()
+        admin = get_user_model().objects.create_superuser('admin', 'a@a.id', 'Rahasia-Kuat-123')
+        self.client.force_authenticate(admin)
 
     def test_member_crud_returns_savings(self):
         response = self.client.post(
@@ -200,3 +207,70 @@ class ConcurrencyTests(TransactionTestCase):
         self.assertEqual(errors, [])
         week_ids = sorted(Member.objects.values_list('id_week', flat=True))
         self.assertEqual(week_ids, [f'{i:03d}' for i in range(1, 9)])
+
+
+class ApiPermissionTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.staff = get_user_model().objects.create_user('petugas', password='Rahasia-Kuat-123')
+        create_member()
+
+    def test_anonymous_request_is_rejected(self):
+        for url in ('/api/members/', '/api/jaminan/', '/api/pinjaman-bulanan/'):
+            self.assertEqual(self.client.get(url).status_code, 401, url)
+
+    def test_user_without_model_permission_cannot_write(self):
+        self.client.force_authenticate(self.staff)
+        self.assertEqual(self.client.get('/api/members/').status_code, 200)
+        response = self.client.post(
+            '/api/members/',
+            {'id_member': 'X1', 'name': 'x', 'address': 'x', 'phone_number': '1'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_user_with_model_permission_can_write(self):
+        self.staff.user_permissions.add(Permission.objects.get(codename='add_member'))
+        self.client.force_authenticate(get_user_model().objects.get(pk=self.staff.pk))
+        response = self.client.post(
+            '/api/members/',
+            {'id_member': 'X1', 'name': 'x', 'address': 'x', 'phone_number': '1'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201)
+
+    def test_token_authentication(self):
+        response = self.client.post(
+            '/api/auth/token/', {'username': 'petugas', 'password': 'Rahasia-Kuat-123'}, format='json',
+        )
+        self.assertEqual(response.status_code, 200)
+        token = response.json()['token']
+        self.assertEqual(token, Token.objects.get(user=self.staff).key)
+
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {token}')
+        self.assertEqual(self.client.get('/api/members/').status_code, 200)
+
+
+class SeedDefaultAdminTests(TestCase):
+    def run_seed(self, *args):
+        call_command('seed_default_admin', *args, stdout=StringIO())
+
+    def test_requires_password(self):
+        with self.assertRaises(CommandError):
+            self.run_seed('--password', '')
+
+    def test_auto_seed_without_password_is_skipped(self):
+        self.run_seed('--if-not-exists', '--password', '')
+        self.assertFalse(get_user_model().objects.exists())
+
+    def test_weak_password_is_rejected(self):
+        for weak in ('admin12345', '12345678'):
+            with self.assertRaises(CommandError):
+                self.run_seed('--password', weak)
+        self.assertFalse(get_user_model().objects.exists())
+
+    def test_creates_superuser_with_strong_password(self):
+        self.run_seed('--username', 'boss', '--password', 'Koperasi-Aman-2026')
+        user = get_user_model().objects.get(username='boss')
+        self.assertTrue(user.is_superuser)
+        self.assertTrue(user.check_password('Koperasi-Aman-2026'))

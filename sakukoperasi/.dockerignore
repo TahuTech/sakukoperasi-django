@@ -8,3 +8,5 @@ venv/
 .git
 .gitignore
 db.sqlite3
+staticfiles/
+data.json

@@ -15,11 +15,14 @@ python manage.py runserver
 
 ## Docker Setup (Django + PostgreSQL)
 
-1. Copy environment template:
+1. Copy environment template, lalu isi `DJANGO_SECRET_KEY` dan `DEFAULT_ADMIN_PASSWORD`:
 
 ```bash
 cp .env.example .env
 ```
+
+- `DJANGO_DEBUG=true` → mode development (`runserver`, auto-reload).
+- `DJANGO_DEBUG=false` → mode production (`gunicorn` + static via whitenoise); `DJANGO_SECRET_KEY` wajib diisi.
 
 2. Build and start containers:
 
@@ -140,13 +143,8 @@ From folder `sakukoperasi/`:
 python manage.py seed_default_admin
 ```
 
-Default credential:
-
-```text
-username: admin
-password: admin12345
-email: admin@sakukoperasi.local
-```
+Tidak ada password bawaan. Password diambil dari `--password` atau `DEFAULT_ADMIN_PASSWORD`,
+dan harus lolos validasi password Django (minimal 8 karakter, tidak umum, tidak hanya angka).
 
 Custom credential example:
 
@@ -158,12 +156,28 @@ Automatic seeder on container startup:
 
 1. Docker entrypoint runs migrate, then auto-seeds admin.
 2. Auto-seed uses safe mode (`--if-not-exists`), so existing admin is not overwritten.
+3. Jika `DEFAULT_ADMIN_PASSWORD` kosong, auto-seed dilewati (buat manual dengan `./tahu superuser`).
 
 Environment variables for auto-seed (`.env`):
 
 ```bash
 AUTO_SEED_ADMIN=true
 DEFAULT_ADMIN_USERNAME=admin
-DEFAULT_ADMIN_PASSWORD=admin12345
+DEFAULT_ADMIN_PASSWORD=<password-kuat>
 DEFAULT_ADMIN_EMAIL=admin@sakukoperasi.local
+```
+
+## Autentikasi API
+
+Semua endpoint `/api/` wajib login. Hak tulis (tambah/ubah/hapus) mengikuti permission model
+Django yang diatur per user/group di admin.
+
+```bash
+# Ambil token
+curl -X POST http://localhost:8000/api/auth/token/ \
+  -H 'Content-Type: application/json' \
+  -d '{"username": "admin", "password": "<password>"}'
+
+# Pakai token
+curl http://localhost:8000/api/members/ -H 'Authorization: Token <token>'
 ```
