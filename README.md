@@ -218,3 +218,42 @@ Status telat bergantung pada tanggal, jadi jalankan pembaruan status setiap hari
 | `/api/pinjaman-bulanan/` | Pinjaman bulanan |
 | `/api/pembayaran-pinjaman/` | Pembayaran (create/list, filter `?loan=<id>`) |
 | `/api/denda-pinjaman/` | Denda (create/list, `PATCH` hanya `is_paid`) |
+
+## Simpanan Sukarela
+
+- Rekening dibuka manual oleh petugas untuk **nasabah** (anggota maupun non-anggota); tidak otomatis saat anggota didaftarkan.
+- **Nomor rekening** diisi manual (mis. sesuai buku tabungan) dan harus unik. Satu nasabah satu rekening per jenis simpanan.
+- Rekening/transaksi dicari dengan **nama nasabah**, nomor rekening, telepon, atau ID anggota (admin: kotak cari & autocomplete; API: `?search=`).
+- Setor/tarik bebas kapan saja. Penarikan dicek terhadap saldo dan **saldo minimum mengendap** (diatur di *Jenis Simpanan*, default 0).
+- Tanggal transaksi tidak boleh di masa depan, sebelum rekening dibuka, atau sebelum transaksi terakhir.
+- Transaksi tidak dapat diubah/dihapus; rekening **ditutup** (saldo harus 0), bukan dihapus.
+- Akun tabungan lama hasil migrasi bernomor `LAMA-<id>` — ganti dengan nomor buku tabungan di admin.
+
+### Bunga simpanan
+
+Aturan bunga diatur di admin **Aturan Bunga Simpanan** dan berversi berdasarkan *Berlaku Mulai*:
+
+| Field | Keterangan |
+|---|---|
+| Bunga (% per tahun) | Persentase tahunan |
+| Dasar Perhitungan | Saldo terendah / saldo akhir / rata-rata saldo harian dalam periode |
+| Saldo Minimum Dapat Bunga | Di bawah nilai ini tidak mendapat bunga |
+
+Bunga per bulan = saldo dasar × %/tahun × jumlah hari ÷ 365, dibulatkan ke bawah ke rupiah. Untuk mengubah aturan, **tambahkan aturan baru** dengan tanggal berlaku baru; aturan yang sudah dipakai posting dikunci agar riwayat tetap dapat ditelusuri. Tanpa aturan, tidak ada bunga yang diposting.
+
+Posting bunga bulan lalu (aman dijalankan ulang, tidak dobel):
+
+```bash
+./tahu apply_savings_interest                      # bulan lalu
+./tahu apply_savings_interest --period 2026-09 --dry-run   # simulasi
+# crontab: tiap tanggal 1 jam 01:00
+0 1 1 * * cd /path/to/SakuKoperasi && ./tahu apply_savings_interest
+```
+
+| Endpoint | Keterangan |
+|---|---|
+| `/api/nasabah/` | Data nasabah (`?search=`) |
+| `/api/rekening-simpanan/` | Buka/lihat rekening (`?search=`), `POST …/{id}/tutup/` |
+| `/api/transaksi-simpanan/` | Setor/tarik (create/list, `?rekening=<id>`, `?search=`) |
+| `/api/jenis-simpanan/` | Jenis simpanan & saldo mengendap |
+| `/api/aturan-bunga/` | Aturan bunga |

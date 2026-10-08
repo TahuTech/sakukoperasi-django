@@ -127,6 +127,7 @@ Loan rules management:
   seed_loan_rules        Seed default loan rules and rate tables
   reseed_loan_rules      Reset and reseed loan rules (destructive)
   refresh_loan_status    Recalculate loan status (proses/telat/lunas); run daily
+  apply_savings_interest Post last month's savings interest; run monthly
 
 Data migration helpers:
   dump       Export data to data.json from web container
@@ -195,6 +196,9 @@ case "$action" in
     ;;
   refresh_loan_status)
     run_manage refresh_loan_status
+    ;;
+  apply_savings_interest)
+    run_manage apply_savings_interest "${@:2}"
     ;;
   seed_all)
     echo "Running all seeders..."

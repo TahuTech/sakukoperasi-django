@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand
 
-from core.models import Member, Savings
+from core.models import Member
 
 
 SAMPLE_MEMBERS = [
@@ -58,14 +58,6 @@ class Command(BaseCommand):
                 self.stdout.write(
                     self.style.SUCCESS(f'✓ Member exists: {member}')
                 )
-
-            # Ensure Savings account exists
-            savings, savings_created = Savings.objects.get_or_create(
-                member=member,
-                defaults={'balance': 0},
-            )
-            if savings_created:
-                self.stdout.write(self.style.SUCCESS(f'  ✓ Savings account created'))
 
         self.stdout.write(
             self.style.SUCCESS(

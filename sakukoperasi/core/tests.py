@@ -1,5 +1,5 @@
 import threading
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from io import StringIO
 
@@ -7,9 +7,10 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.core.exceptions import ValidationError
 from django.core.management import CommandError, call_command
-from django.db import connection
+from django.db import IntegrityError, connection
 from django.db.models import ProtectedError
 from django.test import TestCase, TransactionTestCase
+from django.utils import timezone
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
 
@@ -21,10 +22,14 @@ from .models import (
     LoanRateTable,
     LoanRule,
     Member,
+    Nasabah,
     Savings,
+    SavingsInterestRule,
+    SavingsProduct,
     SavingsTransaction,
     add_months,
 )
+from .savings_interest import calculate_interest, post_monthly_interest
 
 
 def create_member(id_member='A001', **kwargs):
@@ -37,12 +42,23 @@ def create_member(id_member='A001', **kwargs):
     )
 
 
-def add_transaction(savings, transaction_type, amount):
+def voluntary_product():
+    return SavingsProduct.objects.get(code=SavingsProduct.VOLUNTARY)  # dibuat oleh migrasi 0016
+
+
+def create_account(account_number='TAB-001', name='Nasabah Uji', member=None, opened_date=date(2026, 1, 1)):
+    nasabah = Nasabah.objects.create(name=name if not member else '', member=member)
+    return Savings.objects.create(
+        account_number=account_number, nasabah=nasabah, product=voluntary_product(), opened_date=opened_date,
+    )
+
+
+def add_transaction(savings, transaction_type, amount, on_date=None):
     return SavingsTransaction.objects.create(
         savings=savings,
         transaction_type=transaction_type,
         amount=Decimal(amount),
-        transaction_date=date.today(),
+        transaction_date=on_date or timezone.localdate(),
     )
 
 
@@ -52,7 +68,7 @@ WITHDRAWAL = SavingsTransaction.TransactionType.WITHDRAWAL
 
 class SavingsTransactionTests(TestCase):
     def setUp(self):
-        self.savings = create_member().tabungan
+        self.savings = create_account()
 
     def test_deposit_and_withdrawal_update_balance(self):
         tx1 = add_transaction(self.savings, DEPOSIT, '1000')
@@ -358,9 +374,9 @@ class MemberDeletionTests(LoanTestMixin, TestCase):
         with self.assertRaises(ProtectedError):
             self.member.delete()
 
-    def test_member_with_savings_transaction_cannot_be_deleted(self):
+    def test_member_with_savings_account_cannot_be_deleted(self):
         member = create_member('B001')
-        add_transaction(member.tabungan, DEPOSIT, '100')
+        create_account(member=member)
         with self.assertRaises(ProtectedError):
             member.delete()
 
@@ -368,7 +384,6 @@ class MemberDeletionTests(LoanTestMixin, TestCase):
         member = create_member('B001')
         member.delete()
         self.assertFalse(Member.objects.filter(pk=member.pk).exists())
-        self.assertFalse(Savings.objects.filter(member_id=member.pk).exists())
 
 
 class LoanApiTests(LoanTestMixin, TestCase):
@@ -458,7 +473,8 @@ class ApiValidationTests(TestCase):
             format='json',
         )
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.json()['tabungan']['balance'], '0.00')
+        # Simpanan sukarela tidak otomatis dibuat untuk anggota baru.
+        self.assertEqual(response.json()['rekening_simpanan'], [])
         self.assertEqual(self.client.get('/api/members/').status_code, 200)
 
     def test_model_validation_error_returns_400(self):
@@ -504,7 +520,7 @@ class ConcurrencyTests(TransactionTestCase):
         return errors
 
     def test_parallel_deposits_do_not_lose_updates(self):
-        savings_id = create_member().tabungan.pk
+        savings_id = create_account().pk
 
         errors = self.run_parallel(
             lambda _: add_transaction(Savings.objects.get(pk=savings_id), DEPOSIT, '100'),
@@ -641,3 +657,251 @@ class AdminSmokeTests(LoanTestMixin, TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Melebihi sisa pinjaman')
+
+
+class SavingsAccountTests(TestCase):
+    def test_members_no_longer_get_automatic_account(self):
+        create_member()
+        self.assertFalse(Savings.objects.exists())
+
+    def test_non_member_can_open_account_with_manual_number(self):
+        account = create_account('BUKU-0042', name='Pak Umum')
+        self.assertIsNone(account.nasabah.member)
+        self.assertEqual(str(account), 'BUKU-0042 - Pak Umum (Rp 0)')
+
+    def test_nasabah_from_member_copies_data(self):
+        member = create_member('B001', name='Siti', phone_number='0812')
+        account = create_account(member=member)
+        self.assertEqual((account.nasabah.name, account.nasabah.phone_number), ('Siti', '0812'))
+
+    def test_account_number_must_be_unique(self):
+        create_account('TAB-1')
+        with self.assertRaises(IntegrityError):
+            create_account('TAB-1', name='Lain')
+
+    def test_one_voluntary_account_per_nasabah(self):
+        account = create_account('TAB-1')
+        with self.assertRaises(IntegrityError):
+            Savings.objects.create(account_number='TAB-2', nasabah=account.nasabah, product=voluntary_product())
+
+    def test_minimum_balance_is_respected(self):
+        product = voluntary_product()
+        product.min_balance = Decimal('10000')
+        product.save()
+        account = create_account()
+        add_transaction(account, DEPOSIT, '50000')
+        with self.assertRaises(ValidationError) as ctx:
+            add_transaction(account, WITHDRAWAL, '40001')
+        self.assertIn('saldo mengendap', ' '.join(ctx.exception.messages))
+        add_transaction(account, WITHDRAWAL, '40000')
+        account.refresh_from_db()
+        self.assertEqual(account.balance, Decimal('10000'))
+
+    def test_withdrawal_disabled_by_product(self):
+        product = voluntary_product()
+        product.allow_withdrawal = False
+        product.save()
+        account = create_account()
+        add_transaction(account, DEPOSIT, '1000')
+        with self.assertRaises(ValidationError):
+            add_transaction(account, WITHDRAWAL, '1')
+
+    def test_transaction_date_rules(self):
+        account = create_account()
+        add_transaction(account, DEPOSIT, '1000', on_date=date(2026, 3, 10))
+        with self.assertRaises(ValidationError):
+            add_transaction(account, DEPOSIT, '1000', on_date=date(2026, 3, 9))  # mundur
+        with self.assertRaises(ValidationError):
+            add_transaction(account, DEPOSIT, '1000', on_date=timezone.localdate() + timedelta(days=1))
+
+    def test_transaction_before_opening_date_is_rejected(self):
+        account = create_account(opened_date=date(2026, 5, 1))
+        with self.assertRaises(ValidationError):
+            add_transaction(account, DEPOSIT, '1000', on_date=date(2026, 4, 30))
+
+    def test_interest_cannot_be_posted_manually(self):
+        account = create_account()
+        with self.assertRaises(ValidationError):
+            add_transaction(account, SavingsTransaction.TransactionType.INTEREST, '1000')
+
+    def test_close_account(self):
+        account = create_account()
+        add_transaction(account, DEPOSIT, '1000')
+        with self.assertRaises(ValidationError):
+            account.close()
+        add_transaction(account, WITHDRAWAL, '1000')
+        account.close()
+        self.assertFalse(account.is_active)
+        with self.assertRaises(ValidationError):
+            add_transaction(account, DEPOSIT, '1000')
+
+
+class SavingsInterestTests(TestCase):
+    """Saldo uji: 1.000.000 per 1 Mar, tarik 400.000 pada 11 Mar, setor 1.400.000 pada 21 Mar."""
+
+    def setUp(self):
+        self.product = voluntary_product()
+        self.account = create_account(opened_date=date(2026, 2, 1))
+        add_transaction(self.account, DEPOSIT, '1000000', on_date=date(2026, 2, 15))
+        add_transaction(self.account, WITHDRAWAL, '400000', on_date=date(2026, 3, 11))
+        add_transaction(self.account, DEPOSIT, '1400000', on_date=date(2026, 3, 21))
+        self.march = (date(2026, 3, 1), date(2026, 3, 31))
+
+    def add_rule(self, basis, rate='12', effective_from=date(2026, 1, 1), **kwargs):
+        return SavingsInterestRule.objects.create(
+            product=self.product, effective_from=effective_from, annual_rate=Decimal(rate), basis=basis, **kwargs,
+        )
+
+    def test_no_rule_means_no_interest(self):
+        self.assertEqual(calculate_interest(self.account, *self.march), (Decimal('0'), None))
+
+    def test_lowest_balance(self):
+        self.add_rule(SavingsInterestRule.Basis.LOWEST_BALANCE)
+        amount, _ = calculate_interest(self.account, *self.march)
+        # 600.000 × 12% × 31/365 = 6.115,06 → dibulatkan ke bawah
+        self.assertEqual(amount, Decimal('6115'))
+
+    def test_end_balance(self):
+        self.add_rule(SavingsInterestRule.Basis.END_BALANCE)
+        amount, _ = calculate_interest(self.account, *self.march)
+        # 2.000.000 × 12% × 31/365 = 20.383,56
+        self.assertEqual(amount, Decimal('20383'))
+
+    def test_average_daily_balance(self):
+        self.add_rule(SavingsInterestRule.Basis.AVERAGE_DAILY_BALANCE)
+        amount, _ = calculate_interest(self.account, *self.march)
+        # rata-rata = (10×1.000.000 + 10×600.000 + 11×2.000.000) / 31 = 1.225.806,45
+        # × 12% × 31/365 = 12.493,15
+        self.assertEqual(amount, Decimal('12493'))
+
+    def test_rule_version_in_effect_is_used(self):
+        self.add_rule(SavingsInterestRule.Basis.END_BALANCE, rate='12', effective_from=date(2026, 1, 1))
+        new_rule = self.add_rule(SavingsInterestRule.Basis.END_BALANCE, rate='6', effective_from=date(2026, 3, 1))
+        amount, rule = calculate_interest(self.account, *self.march)
+        self.assertEqual(rule, new_rule)
+        self.assertEqual(amount, Decimal('10191'))
+
+        _, feb_rule = calculate_interest(self.account, date(2026, 2, 1), date(2026, 2, 28))
+        self.assertEqual(feb_rule.annual_rate, Decimal('12'))
+
+    def test_below_min_balance_for_interest(self):
+        self.add_rule(SavingsInterestRule.Basis.LOWEST_BALANCE, min_balance_for_interest=Decimal('700000'))
+        self.assertEqual(calculate_interest(self.account, *self.march)[0], Decimal('0'))
+
+    def test_posting_is_idempotent_and_dry_run_saves_nothing(self):
+        self.add_rule(SavingsInterestRule.Basis.END_BALANCE)
+        post_monthly_interest(2026, 3, dry_run=True)
+        self.assertFalse(self.account.transactions.filter(transaction_type='interest').exists())
+
+        call_command('apply_savings_interest', '--period', '2026-03', stdout=StringIO())
+        call_command('apply_savings_interest', '--period', '2026-03', stdout=StringIO())
+        postings = self.account.transactions.filter(transaction_type='interest')
+        self.assertEqual(postings.count(), 1)
+        posting = postings.get()
+        self.assertEqual((posting.amount, posting.transaction_date), (Decimal('20383'), date(2026, 3, 31)))
+
+        self.account.refresh_from_db()
+        self.assertEqual(self.account.balance, Decimal('2020383'))
+
+    def test_used_rule_is_locked(self):
+        rule = self.add_rule(SavingsInterestRule.Basis.END_BALANCE)
+        post_monthly_interest(2026, 3)
+        rule.annual_rate = Decimal('1')
+        with self.assertRaises(ValidationError):
+            rule.full_clean()
+
+    def test_unfinished_period_is_rejected(self):
+        today = timezone.localdate()
+        with self.assertRaises(CommandError):
+            call_command('apply_savings_interest', '--period', f'{today:%Y-%m}', stdout=StringIO())
+
+
+class SavingsApiTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.client.force_authenticate(get_user_model().objects.create_superuser('admin', 'a@a.id', 'Rahasia-Kuat-123'))
+        self.account = create_account('BUKU-0042', name='Budi Santoso')
+        create_account('BUKU-0043', name='Siti Aminah')
+
+    def test_search_account_by_name(self):
+        results = self.client.get('/api/rekening-simpanan/', {'search': 'budi'}).json()
+        self.assertEqual([r['account_number'] for r in results], ['BUKU-0042'])
+        results = self.client.get('/api/nasabah/', {'search': 'siti'}).json()
+        self.assertEqual([r['name'] for r in results], ['Siti Aminah'])
+
+    def test_deposit_withdraw_and_history(self):
+        response = self.client.post(
+            '/api/transaksi-simpanan/', {'savings': self.account.pk, 'transaction_type': 'deposit', 'amount': '50000'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.json()['recorded_by'], 'admin')
+        self.assertEqual(response.json()['balance_after'], '50000.00')
+
+        response = self.client.post(
+            '/api/transaksi-simpanan/', {'savings': self.account.pk, 'transaction_type': 'withdrawal', 'amount': '60000'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+
+        response = self.client.post(
+            '/api/transaksi-simpanan/', {'savings': self.account.pk, 'transaction_type': 'interest', 'amount': '5'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+
+        history = self.client.get('/api/transaksi-simpanan/', {'search': 'budi'}).json()
+        self.assertEqual(len(history), 1)
+        self.assertEqual(self.client.delete(f"/api/transaksi-simpanan/{history[0]['id']}/").status_code, 405)
+
+    def test_open_and_close_account(self):
+        nasabah = Nasabah.objects.create(name='Baru')
+        response = self.client.post(
+            '/api/rekening-simpanan/',
+            {'account_number': 'BUKU-0099', 'nasabah': nasabah.pk, 'product': voluntary_product().pk},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(self.client.delete(f"/api/rekening-simpanan/{response.json()['id']}/").status_code, 405)
+
+        response = self.client.post(f"/api/rekening-simpanan/{response.json()['id']}/tutup/")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()['is_active'])
+
+    def test_member_shows_accounts(self):
+        member = create_member('B001')
+        create_account('BUKU-0100', member=member)
+        data = self.client.get(f'/api/members/{member.pk}/').json()
+        self.assertEqual([r['account_number'] for r in data['rekening_simpanan']], ['BUKU-0100'])
+
+
+class SavingsAdminSmokeTests(TestCase):
+    def setUp(self):
+        self.client.force_login(get_user_model().objects.create_superuser('admin', 'a@a.id', 'Rahasia-Kuat-123'))
+        self.account = create_account('BUKU-0042', name='Budi Santoso')
+        add_transaction(self.account, DEPOSIT, '1000')
+
+    def test_pages_render(self):
+        for url in [
+            '/admin/member/savings/', '/admin/member/savings/add/', f'/admin/member/savings/{self.account.pk}/change/',
+            '/admin/member/savingstransaction/', '/admin/member/savingstransaction/add/',
+            '/admin/member/nasabah/', '/admin/member/nasabah/add/', f'/admin/member/nasabah/{self.account.nasabah.pk}/change/',
+            '/admin/member/savingsproduct/', '/admin/member/savingsinterestrule/add/',
+            '/admin/member/savings/?q=budi',
+        ]:
+            self.assertEqual(self.client.get(url).status_code, 200, url)
+
+    def test_autocomplete_finds_account_by_name(self):
+        response = self.client.get('/admin/autocomplete/', {
+            'term': 'budi', 'app_label': 'member', 'model_name': 'savingstransaction', 'field_name': 'savings',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([r['id'] for r in response.json()['results']], [str(self.account.pk)])
+
+    def test_withdrawal_over_balance_shows_form_error(self):
+        response = self.client.post('/admin/member/savingstransaction/add/', {
+            'savings': self.account.pk, 'transaction_type': 'withdrawal', 'amount': '5000',
+            'transaction_date': timezone.localdate().isoformat(), 'notes': '',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Saldo tidak cukup')
