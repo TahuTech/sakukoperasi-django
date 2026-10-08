@@ -3,14 +3,17 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 
+from .member_savings import deposit, process_exit
 from .models import (
     Jaminan,
     Loan,
     LoanPayment,
     LoanPenalty,
     Member,
+    MemberSavingsAccount,
     Nasabah,
     Savings,
+    SavingsDueRate,
     SavingsInterestRule,
     SavingsProduct,
     SavingsTransaction,
@@ -20,8 +23,11 @@ from .serializers import (
     LoanPaymentSerializer,
     LoanPenaltySerializer,
     LoanSerializer,
+    MemberSavingsAccountSerializer,
+    MemberSavingsDepositSerializer,
     MemberSerializer,
     NasabahSerializer,
+    SavingsDueRateSerializer,
     SavingsInterestRuleSerializer,
     SavingsProductSerializer,
     SavingsSerializer,
@@ -30,7 +36,7 @@ from .serializers import (
 
 
 class MemberViewSet(viewsets.ModelViewSet):
-    queryset = Member.objects.prefetch_related('nasabah__rekening__product').all()
+    queryset = Member.objects.select_related('akun_simpanan').prefetch_related('nasabah__rekening__product').all()
     serializer_class = MemberSerializer
 
     @action(detail=True, methods=['post'])
@@ -174,3 +180,58 @@ class SavingsTransactionViewSet(
 
     def perform_create(self, serializer):
         serializer.save(recorded_by=self.request.user)
+
+
+class SavingsDueRateViewSet(viewsets.ModelViewSet):
+    queryset = SavingsDueRate.objects.select_related('product')
+    serializer_class = SavingsDueRateSerializer
+
+
+class MemberSavingsAccountViewSet(
+    mixins.CreateModelMixin,
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.UpdateModelMixin,
+    viewsets.GenericViewSet,
+):
+    """
+    Akun simpanan pokok & wajib anggota. Cari dengan `?search=` nama/ID anggota/ID akun.
+    Setor lewat `POST {id}/setor/` (pilih jenis), pengembalian lewat `POST {id}/proses-keluar/`.
+    """
+
+    queryset = MemberSavingsAccount.objects.select_related('member')
+    serializer_class = MemberSavingsAccountSerializer
+    filter_backends = (filters.SearchFilter,)
+    search_fields = ('account_number', 'member__name', 'member__id_member')
+
+    def _require_perm(self, perm):
+        if not self.request.user.has_perm(perm):
+            raise PermissionDenied()
+
+    @action(detail=True, methods=['post'])
+    def setor(self, request, pk=None):
+        self._require_perm('member.add_savingstransaction')
+        account = self.get_object()
+        payload = MemberSavingsDepositSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+        tx = deposit(
+            account,
+            data['jenis'],
+            amount=data.get('amount'),
+            on_date=data.get('transaction_date'),
+            notes=data.get('notes', ''),
+            user=request.user,
+        )
+        return Response(SavingsTransactionSerializer(tx).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='proses-keluar')
+    def proses_keluar(self, request, pk=None):
+        self._require_perm('member.change_member')
+        account = self.get_object()
+        refunds = process_exit(account, user=request.user)
+        account.refresh_from_db()
+        return Response({
+            'akun': self.get_serializer(account).data,
+            'pengembalian': SavingsTransactionSerializer(refunds, many=True).data,
+        })

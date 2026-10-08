@@ -22,9 +22,11 @@ from core.views import (
     JaminanViewSet,
     LoanPaymentViewSet,
     LoanPenaltyViewSet,
+    MemberSavingsAccountViewSet,
     MemberViewSet,
     MonthlyLoanViewSet,
     NasabahViewSet,
+    SavingsDueRateViewSet,
     SavingsInterestRuleViewSet,
     SavingsProductViewSet,
     SavingsTransactionViewSet,
@@ -44,6 +46,8 @@ router.register(r'rekening-simpanan', SavingsViewSet)
 router.register(r'transaksi-simpanan', SavingsTransactionViewSet)
 router.register(r'jenis-simpanan', SavingsProductViewSet)
 router.register(r'aturan-bunga', SavingsInterestRuleViewSet)
+router.register(r'akun-simpanan-anggota', MemberSavingsAccountViewSet)
+router.register(r'nominal-simpanan', SavingsDueRateViewSet)
 
 urlpatterns = [
     path('admin/', admin.site.urls),

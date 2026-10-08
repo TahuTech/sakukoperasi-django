@@ -22,13 +22,16 @@ from .models import (
     LoanRateTable,
     LoanRule,
     Member,
+    MemberSavingsAccount,
     Nasabah,
     Savings,
+    SavingsDueRate,
     SavingsInterestRule,
     SavingsProduct,
     SavingsTransaction,
     add_months,
 )
+from .member_savings import deposit, process_exit, summary
 from .savings_interest import calculate_interest, post_monthly_interest
 
 
@@ -905,3 +908,167 @@ class SavingsAdminSmokeTests(TestCase):
         })
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Saldo tidak cukup')
+
+
+
+def product(code):
+    return SavingsProduct.objects.get(code=code)
+
+
+class MemberSavingsTestMixin:
+    def setUp(self):
+        super().setUp()
+        self.pokok, self.wajib = product('pokok'), product('wajib')
+        SavingsDueRate.objects.create(product=self.pokok, effective_from=date(2026, 1, 1), amount=Decimal('100000'))
+        SavingsDueRate.objects.create(product=self.wajib, effective_from=date(2026, 1, 1), amount=Decimal('10000'))
+        SavingsDueRate.objects.create(product=self.wajib, effective_from=date(2026, 4, 1), amount=Decimal('15000'))
+        self.member = create_member('B001', name='Budi')
+        self.account = MemberSavingsAccount.objects.create(
+            account_number='SA-12', member=self.member, opened_date=date(2026, 2, 15),
+        )
+
+
+class MemberSavingsAccountTests(MemberSavingsTestMixin, TestCase):
+    def test_account_creates_nasabah_and_two_sub_accounts(self):
+        numbers = sorted(self.account.sub_accounts.values_list('account_number', flat=True))
+        self.assertEqual(numbers, ['SA-12-POKOK', 'SA-12-WAJIB'])
+        self.assertEqual(self.member.nasabah.name, 'Budi')
+
+    def test_one_account_per_member_and_unique_id(self):
+        with self.assertRaises(IntegrityError):
+            MemberSavingsAccount.objects.create(account_number='SA-99', member=self.member)
+
+    def test_renaming_account_renames_sub_accounts(self):
+        self.account.account_number = 'SA-0012'
+        self.account.save()
+        numbers = sorted(self.account.sub_accounts.values_list('account_number', flat=True))
+        self.assertEqual(numbers, ['SA-0012-POKOK', 'SA-0012-WAJIB'])
+
+    def test_arrears_with_rate_change(self):
+        deposit(self.account, 'pokok', Decimal('60000'), on_date=date(2026, 3, 1))
+        deposit(self.account, 'wajib', Decimal('20000'), on_date=date(2026, 3, 1))
+        info = summary(self.account, as_of=date(2026, 5, 10))
+        # Pokok 100.000 - 60.000
+        self.assertEqual(info['pokok']['tunggakan'], Decimal('40000'))
+        # Wajib Feb 10.000 + Mar 10.000 + Apr 15.000 = 35.000; dibayar 20.000
+        self.assertEqual(info['wajib']['kewajiban'], Decimal('35000'))
+        self.assertEqual(info['wajib']['tunggakan'], Decimal('15000'))
+        self.assertEqual(info['wajib']['tagihan_bulan_ini'], Decimal('15000'))
+
+    def test_overpayment_reduces_current_bill(self):
+        deposit(self.account, 'wajib', Decimal('50000'), on_date=date(2026, 3, 1))
+        info = summary(self.account, as_of=date(2026, 5, 10))
+        self.assertEqual(info['wajib']['tunggakan'], Decimal('0'))
+        self.assertEqual(info['wajib']['tagihan_bulan_ini'], Decimal('0'))
+
+    def test_no_rates_means_no_arrears(self):
+        SavingsDueRate.objects.all().delete()
+        info = summary(self.account, as_of=date(2026, 9, 1))
+        self.assertEqual((info['pokok']['tunggakan'], info['wajib']['tunggakan']), (Decimal('0'), Decimal('0')))
+
+    def test_arrears_stop_when_member_leaves(self):
+        self.member.deactivate(date(2026, 4, 10))
+        self.account.refresh_from_db()
+        info = summary(self.account, as_of=date(2026, 9, 1))
+        self.assertEqual(info['wajib']['kewajiban'], Decimal('20000'))  # Feb + Mar
+
+    def test_withdrawal_rejected_while_member_active(self):
+        deposit(self.account, 'wajib', Decimal('20000'), on_date=date(2026, 3, 1))
+        with self.assertRaises(ValidationError):
+            add_transaction(self.account.sub_account('wajib'), WITHDRAWAL, '1000')
+
+    def test_default_deposit_amount_pays_everything_due(self):
+        due = summary(self.account)['wajib']
+        tx = deposit(self.account, 'wajib')
+        self.assertEqual(tx.amount, due['tunggakan'] + due['tagihan_bulan_ini'])
+
+    def test_no_interest_posted_to_member_savings(self):
+        for code in ('pokok', 'wajib'):
+            self.assertIsNone(SavingsInterestRule.rule_for(product(code), date(2026, 9, 30)))
+        deposit(self.account, 'wajib', Decimal('20000'), on_date=date(2026, 3, 1))
+        post_monthly_interest(2026, 3)
+        self.assertFalse(SavingsTransaction.objects.filter(transaction_type='interest').exists())
+
+
+class MemberExitTests(MemberSavingsTestMixin, LoanTestMixin, TestCase):
+    def setUp(self):
+        super().setUp()
+        deposit(self.account, 'pokok', Decimal('100000'), on_date=date(2026, 3, 1))
+        deposit(self.account, 'wajib', Decimal('30000'), on_date=date(2026, 3, 1))
+
+    def test_exit_rejected_with_active_loan(self):
+        Loan.objects.create(member=self.member, loan_rate_table=self.weekly_rate, loan_date=date(2026, 3, 1))
+        with self.assertRaises(ValidationError):
+            process_exit(self.account)
+        self.member.refresh_from_db()
+        self.assertTrue(self.member.is_active)
+
+    def test_exit_refunds_and_closes(self):
+        refunds = process_exit(self.account)
+        self.assertEqual(sorted(tx.amount for tx in refunds), [Decimal('30000'), Decimal('100000')])
+
+        self.account.refresh_from_db()
+        self.member.refresh_from_db()
+        self.assertFalse(self.account.is_active)
+        self.assertFalse(self.member.is_active)
+        for sub in self.account.sub_accounts.all():
+            self.assertEqual((sub.balance, sub.is_active), (Decimal('0'), False))
+
+
+class MemberSavingsApiTests(MemberSavingsTestMixin, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.client = APIClient()
+        self.client.force_authenticate(get_user_model().objects.create_superuser('admin', 'a@a.id', 'Rahasia-Kuat-123'))
+
+    def test_search_and_summary(self):
+        data = self.client.get('/api/akun-simpanan-anggota/', {'search': 'budi'}).json()
+        self.assertEqual([a['account_number'] for a in data], ['SA-12'])
+        self.assertEqual(set(data[0]['ringkasan']), {'pokok', 'wajib'})
+
+        member = self.client.get(f'/api/members/{self.member.pk}/').json()
+        self.assertEqual(member['akun_simpanan_anggota']['account_number'], 'SA-12')
+
+    def test_deposit_by_choosing_type(self):
+        url = f'/api/akun-simpanan-anggota/{self.account.pk}/setor/'
+        response = self.client.post(url, {'jenis': 'pokok', 'amount': '25000'}, format='json')
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.json()['nomor_rekening'], 'SA-12-POKOK')
+        self.assertEqual(response.json()['recorded_by'], 'admin')
+
+        response = self.client.post(url, {'jenis': 'wajib'}, format='json')  # nominal otomatis
+        self.assertEqual(response.status_code, 201, response.content)
+
+        self.assertEqual(self.client.post(url, {'jenis': 'sukarela', 'amount': '1'}, format='json').status_code, 400)
+
+    def test_create_account_and_exit(self):
+        member = create_member('C001', name='Citra')
+        response = self.client.post(
+            '/api/akun-simpanan-anggota/', {'account_number': 'SA-77', 'member': member.pk}, format='json',
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+
+        response = self.client.post(f"/api/akun-simpanan-anggota/{response.json()['id']}/proses-keluar/")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertFalse(response.json()['akun']['is_active'])
+
+
+class MemberSavingsAdminTests(MemberSavingsTestMixin, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(get_user_model().objects.create_superuser('admin', 'a@a.id', 'Rahasia-Kuat-123'))
+
+    def test_pages_render(self):
+        for url in [
+            '/admin/member/membersavingsaccount/', '/admin/member/membersavingsaccount/add/',
+            f'/admin/member/membersavingsaccount/{self.account.pk}/change/',
+            '/admin/member/savingsduerate/', '/admin/member/savingsduerate/add/',
+            '/admin/member/member/?akun_simpanan=belum',
+        ]:
+            self.assertEqual(self.client.get(url).status_code, 200, url)
+
+    def test_member_filter_without_account(self):
+        create_member('C001', name='Belum Punya')
+        response = self.client.get('/admin/member/member/', {'akun_simpanan': 'belum'})
+        self.assertContains(response, 'Belum Punya')
+        self.assertNotContains(response, '>Budi<')

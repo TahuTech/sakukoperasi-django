@@ -1,12 +1,18 @@
+from decimal import Decimal
+
 from rest_framework import serializers
+
+from .member_savings import summary
 from .models import (
     Jaminan,
     Loan,
     LoanPayment,
     LoanPenalty,
     Member,
+    MemberSavingsAccount,
     Nasabah,
     Savings,
+    SavingsDueRate,
     SavingsInterestRule,
     SavingsProduct,
     SavingsTransaction,
@@ -97,6 +103,7 @@ class SavingsTransactionSerializer(serializers.ModelSerializer):
 
 class MemberSerializer(serializers.ModelSerializer):
     rekening_simpanan = serializers.SerializerMethodField()
+    akun_simpanan_anggota = serializers.SerializerMethodField()
 
     class Meta:
         model = Member
@@ -110,6 +117,7 @@ class MemberSerializer(serializers.ModelSerializer):
             'phone_number',
             'is_active',
             'inactive_date',
+            'akun_simpanan_anggota',
             'rekening_simpanan',
         )
         # Status aktif hanya diubah lewat endpoint nonaktifkan, bukan edit biasa.
@@ -118,6 +126,13 @@ class MemberSerializer(serializers.ModelSerializer):
             'id_week': {'required': False, 'allow_blank': True},
             'id_month': {'required': False, 'allow_blank': True},
         }
+
+    def get_akun_simpanan_anggota(self, obj):
+        """Akun simpanan pokok & wajib; null bila petugas belum membuatkan."""
+        account = getattr(obj, 'akun_simpanan', None)
+        if account is None:
+            return None
+        return {'id': account.id, 'account_number': account.account_number, 'is_active': account.is_active}
 
     def get_rekening_simpanan(self, obj):
         """Rekening simpanan milik anggota (lewat data nasabah); kosong jika belum menabung."""
@@ -221,3 +236,49 @@ class LoanPenaltySerializer(serializers.ModelSerializer):
             'id', 'loan', 'nomor_pinjaman', 'amount', 'penalty_date', 'reason',
             'is_paid', 'paid_date', 'recorded_by', 'created_at',
         )
+
+
+class SavingsDueRateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SavingsDueRate
+        fields = ('id', 'product', 'effective_from', 'amount', 'notes', 'created_at')
+
+    def validate_product(self, value):
+        if value.billing == SavingsProduct.Billing.NONE:
+            raise serializers.ValidationError('Jenis simpanan ini tidak memiliki kewajiban setor.')
+        return value
+
+
+class MemberSavingsAccountSerializer(serializers.ModelSerializer):
+    nama_anggota = serializers.CharField(source='member.name', read_only=True)
+    id_anggota = serializers.CharField(source='member.id_member', read_only=True)
+    ringkasan = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MemberSavingsAccount
+        fields = (
+            'id', 'account_number', 'member', 'id_anggota', 'nama_anggota', 'opened_date',
+            'is_active', 'closed_date', 'ringkasan', 'created_at', 'updated_at',
+        )
+
+    def get_ringkasan(self, obj):
+        return {
+            code: {key: (f'{value:.2f}' if not isinstance(value, str) else value) for key, value in info.items()}
+            for code, info in summary(obj).items()
+        }
+
+    def validate(self, attrs):
+        if self.instance:
+            for field in ('member', 'opened_date'):
+                if field in attrs and attrs[field] != getattr(self.instance, field):
+                    raise serializers.ValidationError({field: 'Tidak dapat diubah setelah akun dibuat.'})
+        return attrs
+
+
+class MemberSavingsDepositSerializer(serializers.Serializer):
+    """Setoran: pilih jenis (pokok/wajib); jumlah kosong = bayar semua kewajiban yang jatuh tempo."""
+
+    jenis = serializers.ChoiceField(choices=MemberSavingsAccount.SUB_ACCOUNT_PRODUCTS)
+    amount = serializers.DecimalField(max_digits=15, decimal_places=2, required=False, min_value=Decimal('0.01'))
+    transaction_date = serializers.DateField(required=False)
+    notes = serializers.CharField(required=False, allow_blank=True, default='')

@@ -1,6 +1,7 @@
 from django.contrib import admin, messages
 from django.core.exceptions import ValidationError
-from django.utils.html import format_html
+from django.utils.html import format_html, format_html_join
+from .member_savings import process_exit, summary
 from .models import (
     Jaminan,
     Loan,
@@ -9,8 +10,10 @@ from .models import (
     LoanRateTable,
     LoanRule,
     Member,
+    MemberSavingsAccount,
     Nasabah,
     Savings,
+    SavingsDueRate,
     SavingsInterestRule,
     SavingsProduct,
     SavingsTransaction,
@@ -27,10 +30,26 @@ admin.site.site_header = 'SakuKoperasi Administration'
 admin.site.site_title = 'SakuKoperasi Admin'
 admin.site.index_title = 'Dashboard Admin'
 
+class HasMemberSavingsAccountFilter(admin.SimpleListFilter):
+    title = 'Akun simpanan pokok & wajib'
+    parameter_name = 'akun_simpanan'
+
+    def lookups(self, request, model_admin):
+        return (('ada', 'Sudah ada'), ('belum', 'Belum ada'))
+
+    def queryset(self, request, queryset):
+        if self.value() == 'ada':
+            return queryset.filter(akun_simpanan__isnull=False)
+        if self.value() == 'belum':
+            return queryset.filter(akun_simpanan__isnull=True)
+        return queryset
+
+
 @admin.register(Member)
 class MemberAdmin(admin.ModelAdmin):
-    list_display = ('id_member', 'name', 'id_week', 'id_month', 'phone_number', 'is_active')
-    list_filter = ('is_active',)
+    list_display = ('id_member', 'name', 'id_week', 'id_month', 'phone_number', 'get_savings_account', 'is_active')
+    list_filter = ('is_active', HasMemberSavingsAccountFilter)
+    list_select_related = ('akun_simpanan',)
     search_fields = ('id_member', 'name', 'phone_number')
     readonly_fields = ('inactive_date',)
     actions = ('deactivate_members',)
@@ -48,6 +67,11 @@ class MemberAdmin(admin.ModelAdmin):
             'classes': ('collapse',),
         }),
     )
+
+    @admin.display(description='ID Akun Simpanan')
+    def get_savings_account(self, obj):
+        account = getattr(obj, 'akun_simpanan', None)
+        return account.account_number if account else format_html('<span style="color:#b45309">{}</span>', 'belum ada')
 
     @admin.action(description='Nonaktifkan anggota terpilih')
     def deactivate_members(self, request, queryset):
@@ -274,7 +298,7 @@ class LoanPenaltyAdmin(admin.ModelAdmin):
 
 @admin.register(SavingsProduct)
 class SavingsProductAdmin(admin.ModelAdmin):
-    list_display = ('name', 'code', 'get_min_balance', 'allow_withdrawal', 'is_active')
+    list_display = ('name', 'code', 'billing', 'get_min_balance', 'allow_withdrawal', 'withdraw_only_on_exit', 'is_active')
     list_filter = ('is_active',)
 
     @admin.display(description='Saldo Mengendap')
@@ -484,6 +508,126 @@ class SavingsTransactionAdmin(ManualTransactionTypeMixin, admin.ModelAdmin):
     # Transaksi append-only: koreksi dilakukan dengan membuat transaksi pembalik.
     def has_change_permission(self, request, obj=None):
         return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(SavingsDueRate)
+class SavingsDueRateAdmin(admin.ModelAdmin):
+    list_display = ('product', 'effective_from', 'get_amount')
+    list_filter = ('product',)
+    readonly_fields = ('created_at',)
+
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        if db_field.name == 'product':
+            kwargs['queryset'] = SavingsProduct.objects.exclude(billing=SavingsProduct.Billing.NONE)
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
+
+    @admin.display(description='Nominal')
+    def get_amount(self, obj):
+        return format_rupiah(obj.amount)
+
+
+class MemberSubAccountInline(admin.TabularInline):
+    """Sub-rekening pokok & wajib; klik untuk melihat/menambah transaksi."""
+    model = Savings
+    fk_name = 'member_account'
+    extra = 0
+    fields = ('account_number', 'product', 'get_balance', 'is_active')
+    readonly_fields = fields
+    show_change_link = True
+    verbose_name = 'Sub-rekening'
+    verbose_name_plural = 'Sub-rekening (klik untuk transaksi)'
+
+    @admin.display(description='Saldo')
+    def get_balance(self, obj):
+        return format_rupiah(obj.balance)
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(MemberSavingsAccount)
+class MemberSavingsAccountAdmin(admin.ModelAdmin):
+    """Akun simpanan pokok & wajib; cari dengan nama/ID anggota atau ID akun."""
+    list_display = (
+        'account_number', 'member', 'opened_date',
+        'get_pokok_balance', 'get_pokok_arrears', 'get_wajib_balance', 'get_wajib_arrears', 'is_active',
+    )
+    list_filter = ('is_active',)
+    search_fields = ('account_number', 'member__name', 'member__id_member')
+    autocomplete_fields = ('member',)
+    readonly_fields = ('is_active', 'closed_date', 'get_summary', 'created_at', 'updated_at')
+    inlines = (MemberSubAccountInline,)
+    actions = ('process_member_exit',)
+    fieldsets = (
+        ('Akun', {
+            'fields': ('account_number', 'member', 'opened_date'),
+            'description': 'ID akun diisi manual. Sub-rekening pokok & wajib dibuat otomatis; wajib ditagih mulai bulan buka.',
+        }),
+        ('Ringkasan', {'fields': ('get_summary', 'is_active', 'closed_date')}),
+        ('Metadata', {'fields': ('created_at', 'updated_at'), 'classes': ('collapse',)}),
+    )
+
+    def get_readonly_fields(self, request, obj=None):
+        if obj is not None:
+            return self.readonly_fields + ('member', 'opened_date')
+        return self.readonly_fields
+
+    def _info(self, obj, code, key):
+        return format_rupiah(summary(obj).get(code, {}).get(key))
+
+    @admin.display(description='Saldo Pokok')
+    def get_pokok_balance(self, obj):
+        return self._info(obj, SavingsProduct.PRINCIPAL, 'saldo')
+
+    @admin.display(description='Tunggakan Pokok')
+    def get_pokok_arrears(self, obj):
+        return self._info(obj, SavingsProduct.PRINCIPAL, 'tunggakan')
+
+    @admin.display(description='Saldo Wajib')
+    def get_wajib_balance(self, obj):
+        return self._info(obj, SavingsProduct.MANDATORY, 'saldo')
+
+    @admin.display(description='Tunggakan Wajib')
+    def get_wajib_arrears(self, obj):
+        return self._info(obj, SavingsProduct.MANDATORY, 'tunggakan')
+
+    @admin.display(description='Ringkasan Simpanan')
+    def get_summary(self, obj):
+        if not obj.pk:
+            return '-'
+        rows = format_html_join(
+            '',
+            '<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>',
+            (
+                (
+                    code.title(), format_rupiah(info['saldo']), format_rupiah(info['kewajiban']),
+                    format_rupiah(info['tunggakan']), format_rupiah(info['tagihan_bulan_ini']),
+                )
+                for code, info in summary(obj).items()
+            ),
+        )
+        return format_html(
+            '<table><tr><th>Jenis</th><th>Saldo</th><th>Kewajiban</th><th>Tunggakan</th>'
+            '<th>Tagihan Bulan Ini</th></tr>{}</table>',
+            rows,
+        )
+
+    @admin.action(description='Proses keluar anggota (kembalikan pokok & wajib, tutup akun)')
+    def process_member_exit(self, request, queryset):
+        for account in queryset.filter(is_active=True):
+            try:
+                refunds = process_exit(account, user=request.user)
+            except ValidationError as exc:
+                self.message_user(request, f'{account.account_number}: {" ".join(exc.messages)}', messages.ERROR)
+            else:
+                total = sum(tx.amount for tx in refunds)
+                self.message_user(request, f'{account.account_number}: dikembalikan {format_rupiah(total)}, akun ditutup.')
 
     def has_delete_permission(self, request, obj=None):
         return False

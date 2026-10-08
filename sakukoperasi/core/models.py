@@ -662,6 +662,13 @@ class SavingsProduct(models.Model):
     """
 
     VOLUNTARY = 'sukarela'
+    PRINCIPAL = 'pokok'
+    MANDATORY = 'wajib'
+
+    class Billing(models.TextChoices):
+        NONE = 'none', 'Bebas (tanpa kewajiban)'
+        ONCE = 'once', 'Sekali (boleh dicicil)'
+        MONTHLY = 'monthly', 'Tiap bulan'
 
     code = models.SlugField(max_length=30, unique=True, verbose_name='Kode')
     name = models.CharField(max_length=100, verbose_name='Nama')
@@ -674,6 +681,18 @@ class SavingsProduct(models.Model):
         help_text='Saldo yang harus tersisa setelah penarikan.',
     )
     allow_withdrawal = models.BooleanField(default=True, verbose_name='Boleh Ditarik')
+    withdraw_only_on_exit = models.BooleanField(
+        default=False,
+        verbose_name='Tarik Hanya Saat Keluar',
+        help_text='Penarikan hanya diizinkan bila anggota pemilik sudah nonaktif (keluar).',
+    )
+    billing = models.CharField(
+        max_length=10,
+        choices=Billing.choices,
+        default=Billing.NONE,
+        verbose_name='Kewajiban Setor',
+        help_text='Nominal kewajiban diatur di menu Nominal Simpanan.',
+    )
     is_active = models.BooleanField(default=True, verbose_name='Aktif')
 
     class Meta:
@@ -682,6 +701,51 @@ class SavingsProduct(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class SavingsDueRate(models.Model):
+    """Nominal kewajiban simpanan (pokok sekali / wajib per bulan), berversi per tanggal berlaku."""
+
+    product = models.ForeignKey(
+        SavingsProduct,
+        on_delete=models.PROTECT,
+        related_name='due_rates',
+        verbose_name='Jenis Simpanan',
+    )
+    effective_from = models.DateField(verbose_name='Berlaku Mulai')
+    amount = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0'))],
+        verbose_name='Nominal',
+    )
+    notes = models.TextField(blank=True, verbose_name='Catatan')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['product', '-effective_from']
+        verbose_name = 'Nominal Simpanan'
+        verbose_name_plural = 'Nominal Simpanan'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['product', 'effective_from'],
+                name='unique_due_rate_per_product_date',
+                violation_error_message='Sudah ada nominal untuk jenis simpanan & tanggal berlaku ini.',
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.product} Rp {self.amount:,.0f} mulai {self.effective_from}"
+
+    def clean(self):
+        if self.product_id and self.product.billing == SavingsProduct.Billing.NONE:
+            raise ValidationError({'product': 'Jenis simpanan ini tidak memiliki kewajiban setor.'})
+
+    @classmethod
+    def amount_for(cls, product, on_date):
+        """Nominal yang berlaku pada tanggal tertentu; 0 bila belum diatur."""
+        rate = cls.objects.filter(product=product, effective_from__lte=on_date).order_by('-effective_from').first()
+        return rate.amount if rate else Decimal('0')
 
 
 class Nasabah(models.Model):
@@ -810,9 +874,19 @@ class Savings(models.Model):
     """Rekening simpanan nasabah (nomor rekening diisi manual oleh petugas)."""
 
     account_number = models.CharField(
-        max_length=20,
+        max_length=30,
         unique=True,
         verbose_name='Nomor Rekening',
+    )
+    member_account = models.ForeignKey(
+        'MemberSavingsAccount',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        editable=False,
+        related_name='sub_accounts',
+        verbose_name='Akun Simpanan Anggota',
+        help_text='Terisi untuk sub-rekening simpanan pokok & wajib.',
     )
     nasabah = models.ForeignKey(
         Nasabah,
@@ -979,6 +1053,9 @@ class SavingsTransaction(models.Model):
             product = savings.product
             if not product.allow_withdrawal:
                 raise ValidationError({'transaction_type': f'{product} tidak dapat ditarik.'})
+            owner = savings.nasabah.member
+            if product.withdraw_only_on_exit and (owner is None or owner.is_active):
+                raise ValidationError({'transaction_type': f'{product} hanya dapat ditarik saat anggota keluar.'})
             available = max(savings.balance - product.min_balance, Decimal('0'))
             if Decimal(self.amount) > available:
                 raise ValidationError({'amount': (
@@ -1032,3 +1109,81 @@ class SavingsTransaction(models.Model):
             f"{self.savings.account_number} - "
             f"Rp {self.amount:,.0f} ({self.transaction_date})"
         )
+
+
+class MemberSavingsAccount(models.Model):
+    """
+    Akun simpanan anggota (ID diisi manual) yang menampung simpanan pokok & wajib.
+
+    Saldo tiap jenis disimpan di sub-rekening `Savings` (<ID>-POKOK, <ID>-WAJIB) sehingga
+    validasi, transaksi append-only, dan riwayat saldo memakai mekanisme rekening yang sama.
+    """
+
+    SUB_ACCOUNT_PRODUCTS = (SavingsProduct.PRINCIPAL, SavingsProduct.MANDATORY)
+
+    account_number = models.CharField(max_length=20, unique=True, verbose_name='ID Akun Simpanan')
+    member = models.OneToOneField(
+        Member,
+        on_delete=models.PROTECT,
+        related_name='akun_simpanan',
+        verbose_name='Anggota',
+    )
+    opened_date = models.DateField(
+        default=timezone.localdate,
+        verbose_name='Tanggal Buka',
+        help_text='Simpanan wajib ditagih mulai bulan ini.',
+    )
+    is_active = models.BooleanField(default=True, editable=False, verbose_name='Aktif')
+    closed_date = models.DateField(null=True, blank=True, editable=False, verbose_name='Tanggal Tutup')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['account_number']
+        verbose_name = 'Akun Simpanan Anggota'
+        verbose_name_plural = 'Akun Simpanan Anggota'
+
+    def __str__(self):
+        return f"{self.account_number} - {self.member.name}"
+
+    @staticmethod
+    def sub_account_number(account_number, product_code):
+        return f"{account_number}-{product_code.upper()}"
+
+    def sub_account(self, product_code):
+        return self.sub_accounts.get(product__code=product_code)
+
+    def clean(self):
+        self.account_number = (self.account_number or '').strip()
+        if self._state.adding and self.member_id and not self.member.is_active:
+            raise ValidationError({'member': 'Anggota nonaktif tidak dapat dibuatkan akun simpanan.'})
+        if not self._state.adding:
+            original = MemberSavingsAccount.objects.only('member_id', 'opened_date').get(pk=self.pk)
+            if original.member_id != self.member_id:
+                raise ValidationError({'member': 'Anggota tidak dapat diubah setelah akun dibuat.'})
+
+    def save(self, *args, **kwargs):
+        adding = self._state.adding
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            if adding:
+                self._create_sub_accounts()
+            else:
+                # ID akun diganti → nomor sub-rekening ikut menyesuaikan.
+                for sub in self.sub_accounts.select_related('product'):
+                    expected = self.sub_account_number(self.account_number, sub.product.code)
+                    if sub.account_number != expected:
+                        sub.account_number = expected
+                        sub.save(update_fields=['account_number', 'updated_at'])
+
+    def _create_sub_accounts(self):
+        nasabah, _ = Nasabah.objects.get_or_create(member=self.member)
+        for code in self.SUB_ACCOUNT_PRODUCTS:
+            product = SavingsProduct.objects.get(code=code)
+            Savings.objects.create(
+                account_number=self.sub_account_number(self.account_number, code),
+                member_account=self,
+                nasabah=nasabah,
+                product=product,
+                opened_date=self.opened_date,
+            )

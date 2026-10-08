@@ -257,3 +257,20 @@ Posting bunga bulan lalu (aman dijalankan ulang, tidak dobel):
 | `/api/transaksi-simpanan/` | Setor/tarik (create/list, `?rekening=<id>`, `?search=`) |
 | `/api/jenis-simpanan/` | Jenis simpanan & saldo mengendap |
 | `/api/aturan-bunga/` | Aturan bunga |
+
+## Simpanan Pokok & Wajib
+
+- Wajib untuk setiap anggota, dicatat dalam **Akun Simpanan Anggota** dengan **ID diisi manual** petugas (mis. `SA-0012`), satu akun per anggota.
+- Akun dibuat terpisah dari pendaftaran anggota. Anggota yang belum punya akun: admin **Anggota → filter "Akun simpanan pokok & wajib: Belum ada"**.
+- Saat akun dibuat, sistem membuat 2 sub-rekening: `<ID>-POKOK` dan `<ID>-WAJIB`. Saat setor, pilih akun (cari nama) lalu pilih jenis **pokok** atau **wajib**.
+- **Nominal** diatur di admin **Nominal Simpanan** (berversi per tanggal berlaku). Pokok dibayar sekali (boleh dicicil); wajib per bulan mulai bulan akun dibuka.
+- **Tunggakan** = kewajiban yang sudah jatuh tempo − total setoran (wajib dihitung s.d. bulan lalu; bulan berjalan = tagihan bulan ini). Kelebihan setor mengurangi tagihan bulan berikutnya.
+- Pokok & wajib **hanya bisa ditarik saat anggota keluar** lewat **Proses keluar anggota** (admin aksi / API), yang ditolak bila masih ada pinjaman atau denda belum lunas. Proses ini menonaktifkan anggota, mengembalikan seluruh saldo pokok & wajib, dan menutup akun. Simpanan sukarela diurus terpisah.
+- Pokok & wajib tidak mendapat bunga (bisa diaktifkan nanti dengan menambah Aturan Bunga untuk jenis tersebut).
+
+| Endpoint | Keterangan |
+|---|---|
+| `/api/akun-simpanan-anggota/` | Buat/lihat akun (`?search=` nama/ID anggota/ID akun), berisi ringkasan saldo & tunggakan |
+| `POST /api/akun-simpanan-anggota/{id}/setor/` | `{"jenis": "pokok"\|"wajib", "amount": opsional}`; tanpa `amount` = bayar semua yang jatuh tempo |
+| `POST /api/akun-simpanan-anggota/{id}/proses-keluar/` | Pengembalian simpanan & tutup akun |
+| `/api/nominal-simpanan/` | Nominal pokok/wajib berversi |
