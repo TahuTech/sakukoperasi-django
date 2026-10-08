@@ -4,7 +4,7 @@ from .serializers import JaminanSerializer, MemberSerializer, MonthlyLoanSeriali
 
 
 class MemberViewSet(viewsets.ModelViewSet):
-    queryset = Member.objects.select_related('savings').all()
+    queryset = Member.objects.select_related('tabungan').all()
     serializer_class = MemberSerializer
 
 

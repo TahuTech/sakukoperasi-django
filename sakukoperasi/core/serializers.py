@@ -9,7 +9,7 @@ class SavingsSerializer(serializers.ModelSerializer):
 
 
 class MemberSerializer(serializers.ModelSerializer):
-    tabungan = SavingsSerializer(source='savings', read_only=True)
+    tabungan = SavingsSerializer(read_only=True)
 
     class Meta:
         model = Member
