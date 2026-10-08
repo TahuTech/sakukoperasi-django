@@ -263,12 +263,21 @@ class Loan(models.Model):
         LUNAS = 'lunas', 'Lunas'
         TELAT = 'telat', 'Telat'
 
-    NUMBER_PREFIX = {LoanType.WEEKLY: 'PM', LoanType.MONTHLY: 'PB'}
-
-    loan_number = models.PositiveIntegerField(
-        unique=True,
+    # Nomor pinjaman = ID anggota sesuai jenis (mingguan 3 digit, bulanan 4 digit).
+    # Unik di antara pinjaman aktif karena tiap anggota maks 1 pinjaman aktif per jenis;
+    # pinjaman berikutnya setelah lunas memakai nomor yang sama dengan urutan `sequence` berbeda.
+    loan_number = models.CharField(
+        max_length=4,
         editable=False,
+        db_index=True,
         verbose_name='Nomor Pinjaman',
+        help_text='Mingguan: ID Mingguan anggota. Bulanan: ID Bulanan anggota.',
+    )
+    sequence = models.PositiveIntegerField(
+        default=1,
+        editable=False,
+        verbose_name='Pinjaman ke-',
+        help_text='Urutan pinjaman anggota untuk jenis yang sama.',
     )
     loan_type = models.CharField(
         max_length=10,
@@ -359,16 +368,25 @@ class Loan(models.Model):
                 name='unique_jaminan_per_active_loan',
                 violation_error_message='Jaminan masih dipakai pinjaman lain yang belum lunas.',
             ),
+            models.UniqueConstraint(
+                fields=['member', 'loan_type', 'sequence'],
+                name='unique_loan_sequence_per_member_type',
+            ),
         ]
 
     def __str__(self):
-        return f"{self.formatted_number} - {self.member.id_member} - {self.get_status_display()}"
+        return f"{self.number_label} - {self.member.id_member} - {self.get_status_display()}"
 
     @property
     def formatted_number(self):
+        return self.loan_number or None
+
+    @property
+    def number_label(self):
+        """Nomor untuk tampilan riwayat, mis. `007` atau `007 (ke-2)`."""
         if not self.loan_number:
-            return None
-        return f"{self.NUMBER_PREFIX.get(self.loan_type, 'P')}-{self.loan_number:06d}"
+            return '-'
+        return self.loan_number if self.sequence <= 1 else f"{self.loan_number} (ke-{self.sequence})"
 
     # --- Ringkasan keuangan ---
 
@@ -474,13 +492,22 @@ class Loan(models.Model):
             raise ValidationError(errors)
 
     def save(self, *args, **kwargs):
-        auto_number = not self.loan_number
+        adding = self._state.adding
 
         def generate_ids():
-            if auto_number:
-                max_loan_number = Loan.objects.aggregate(max_number=Max('loan_number'))['max_number'] or 0
-                self.loan_number = max_loan_number + 1
-            return auto_number
+            if not (adding and self.member_id and self.loan_rate_table_id):
+                return False
+            # Jenis harus diketahui dulu untuk menentukan ID anggota yang dipakai.
+            self.apply_rate_table()
+            member = self.member
+            self.loan_number = member.id_week if self.loan_type == self.LoanType.WEEKLY else member.id_month
+            last_sequence = (
+                Loan.objects.filter(member_id=self.member_id, loan_type=self.loan_type)
+                .aggregate(last=Max('sequence'))['last']
+                or 0
+            )
+            self.sequence = last_sequence + 1
+            return True
 
         def do_save():
             self.full_clean()

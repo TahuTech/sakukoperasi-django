@@ -103,7 +103,7 @@ class LoanPenaltyInline(admin.TabularInline):
 @admin.register(Loan)
 class LoanAdmin(admin.ModelAdmin):
     list_display = (
-        'formatted_number',
+        'number_label',
         'loan_type',
         'member',
         'loan_date',
@@ -116,7 +116,7 @@ class LoanAdmin(admin.ModelAdmin):
     autocomplete_fields = ('member', 'loan_rate_table', 'jaminan')
     inlines = (LoanPaymentInline, LoanPenaltyInline)
     readonly_fields = (
-        'formatted_number', 'loan_type', 'status',
+        'loan_number', 'sequence', 'loan_type', 'status',
         'get_loan_amount', 'get_admin_fee', 'get_disbursed_amount', 'installment_duration',
         'get_installment_amount', 'get_total_due', 'get_total_paid', 'get_remaining',
         'get_unpaid_penalties', 'created_at', 'updated_at',
@@ -131,7 +131,8 @@ class LoanAdmin(admin.ModelAdmin):
             ),
         }),
         ('Informasi Pinjaman', {
-            'fields': ('formatted_number', 'loan_type', 'loan_date', 'status'),
+            'fields': ('loan_number', 'sequence', 'loan_type', 'loan_date', 'status'),
+            'description': 'Nomor pinjaman otomatis: ID Mingguan anggota (mingguan) atau ID Bulanan anggota (bulanan).',
         }),
         ('Nilai Dari Tarif', {
             'fields': (
@@ -171,9 +172,9 @@ class LoanAdmin(admin.ModelAdmin):
         qs = super().get_queryset(request)
         return qs.select_related('member', 'loan_rate_table', 'jaminan')
 
-    @admin.display(description='No. Pinjaman')
-    def formatted_number(self, obj):
-        return obj.formatted_number
+    @admin.display(description='No. Pinjaman', ordering='loan_number')
+    def number_label(self, obj):
+        return obj.number_label
 
     @admin.display(description='Jumlah Pinjaman')
     def get_loan_amount(self, obj):

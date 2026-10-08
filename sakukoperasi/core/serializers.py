@@ -49,7 +49,8 @@ class LoanSerializer(serializers.ModelSerializer):
     """Serializer pinjaman; jenis pinjaman ditentukan oleh endpoint (context `loan_type`)."""
 
     nomor_anggota = serializers.CharField(source='member.id_member', read_only=True)
-    nomor_pinjaman = serializers.CharField(source='formatted_number', read_only=True)
+    nomor_pinjaman = serializers.CharField(source='loan_number', read_only=True)
+    pinjaman_ke = serializers.IntegerField(source='sequence', read_only=True)
     total_due = money_field(label='Total Tagihan')
     total_paid = money_field(label='Total Dibayar')
     remaining = money_field(label='Sisa Pinjaman')
@@ -59,8 +60,8 @@ class LoanSerializer(serializers.ModelSerializer):
         model = Loan
         fields = (
             'id',
-            'loan_number',
             'nomor_pinjaman',
+            'pinjaman_ke',
             'loan_type',
             'member',
             'nomor_anggota',

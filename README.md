@@ -191,7 +191,9 @@ curl http://localhost:8000/api/members/ -H 'Authorization: Token <token>'
 | Biaya admin | Dipotong saat pencairan | Dipotong saat pencairan |
 | Jatuh tempo | Tiap 7 hari dari tanggal pinjam | Tanggal yang sama tiap bulan |
 | Pinjaman aktif | Maks 1 per anggota | Maks 1 per anggota |
+| Nomor pinjaman | ID Mingguan anggota (3 digit, mis. `007`) | ID Bulanan anggota (4 digit, mis. `0012`) |
 
+- Pinjam lagi setelah lunas memakai nomor yang sama, dibedakan dengan urutan **pinjaman ke-n** (`pinjaman_ke` di API).
 - Pembayaran bebas nominal, tidak bisa melebihi sisa pinjaman, dan tidak bisa diubah/dihapus.
 - **Telat**: total dibayar < angsuran × jumlah periode yang sudah jatuh tempo.
 - **Denda** diinput manual oleh petugas (nominal + alasan) dan dibayar terpisah.

@@ -173,8 +173,8 @@ class AddMonthsTests(TestCase):
 class LoanCreationTests(LoanTestMixin, TestCase):
     def test_snapshot_values_from_rate_table(self):
         loan = self.create_monthly()
-        self.assertEqual(loan.loan_number, 1)
-        self.assertEqual(loan.formatted_number, 'PB-000001')
+        self.assertEqual(loan.loan_number, self.member.id_month)
+        self.assertEqual(loan.sequence, 1)
         self.assertEqual(loan.loan_type, MONTHLY)
         self.assertEqual(loan.admin_fee, Decimal('50000'))
         self.assertEqual(loan.disbursed_amount, Decimal('950000'))
@@ -192,7 +192,7 @@ class LoanCreationTests(LoanTestMixin, TestCase):
     def test_weekly_loan_without_jaminan(self):
         loan = self.create_weekly()
         self.assertEqual(loan.loan_type, WEEKLY)
-        self.assertEqual(loan.formatted_number, 'PM-000001')
+        self.assertEqual(loan.loan_number, self.member.id_week)
         self.assertIsNone(loan.jaminan)
 
     def test_monthly_loan_requires_jaminan(self):
@@ -240,6 +240,41 @@ class LoanCreationTests(LoanTestMixin, TestCase):
         loan.member = create_member('B001')
         with self.assertRaises(ValidationError):
             loan.save()
+
+
+class LoanNumberTests(LoanTestMixin, TestCase):
+    def test_number_follows_member_ids(self):
+        member = create_member('B001', id_week='7', id_month='12')
+        jaminan = Jaminan.objects.create(member=member, jenis_penjamin=Jaminan.JenisPenjamin.BPKB)
+
+        weekly = self.create_weekly(member=member)
+        monthly = self.create_monthly(member=member, jaminan=jaminan)
+
+        self.assertEqual(weekly.loan_number, '007')
+        self.assertEqual(monthly.loan_number, '0012')
+        self.assertEqual(str(weekly), f'007 - B001 - {weekly.get_status_display()}')
+
+    def test_repeat_loan_keeps_number_with_next_sequence(self):
+        first = self.create_weekly()
+        self.pay(first, first.total_due)
+
+        second = self.create_weekly(loan_date=date(2026, 6, 1))
+        self.assertEqual(second.loan_number, first.loan_number)
+        self.assertEqual((first.sequence, second.sequence), (1, 2))
+        self.assertEqual(second.number_label, f'{second.loan_number} (ke-2)')
+
+    def test_sequence_is_counted_per_type(self):
+        self.create_weekly()
+        monthly = self.create_monthly()
+        self.assertEqual(monthly.sequence, 1)
+
+    def test_number_is_snapshot_when_member_id_changes(self):
+        loan = self.create_weekly()
+        original = loan.loan_number
+        self.member.id_week = '999'
+        self.member.save()
+        loan.refresh_from_db()
+        self.assertEqual(loan.loan_number, original)
 
 
 class LoanStatusTests(LoanTestMixin, TestCase):
@@ -350,7 +385,8 @@ class LoanApiTests(LoanTestMixin, TestCase):
             format='json',
         )
         self.assertEqual(response.status_code, 201, response.content)
-        self.assertEqual(response.json()['nomor_pinjaman'], 'PM-000001')
+        self.assertEqual(response.json()['nomor_pinjaman'], self.member.id_week)
+        self.assertEqual(response.json()['pinjaman_ke'], 1)
         self.assertEqual(response.json()['disbursed_amount'], '490000.00')
 
         response = self.client.post(
