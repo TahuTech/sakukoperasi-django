@@ -181,3 +181,38 @@ curl -X POST http://localhost:8000/api/auth/token/ \
 # Pakai token
 curl http://localhost:8000/api/members/ -H 'Authorization: Token <token>'
 ```
+
+## Aturan Pinjaman
+
+| Aturan | Mingguan | Bulanan |
+|---|---|---|
+| Tarif | Tabel tarif (diisi via admin) | Tabel tarif (`seed_loan_rules`) |
+| Jaminan | Opsional | Wajib, milik anggota yang sama |
+| Biaya admin | Dipotong saat pencairan | Dipotong saat pencairan |
+| Jatuh tempo | Tiap 7 hari dari tanggal pinjam | Tanggal yang sama tiap bulan |
+| Pinjaman aktif | Maks 1 per anggota | Maks 1 per anggota |
+
+- Pembayaran bebas nominal, tidak bisa melebihi sisa pinjaman, dan tidak bisa diubah/dihapus.
+- **Telat**: total dibayar < angsuran × jumlah periode yang sudah jatuh tempo.
+- **Denda** diinput manual oleh petugas (nominal + alasan) dan dibayar terpisah.
+- **Lunas**: sisa pinjaman 0 dan tidak ada denda yang belum dibayar.
+- Jaminan tidak boleh dipakai di dua pinjaman yang belum lunas.
+- Anggota yang punya data keuangan tidak bisa dihapus; gunakan **nonaktifkan** (anggota nonaktif tidak bisa mengajukan pinjaman baru).
+
+Status telat bergantung pada tanggal, jadi jalankan pembaruan status setiap hari (cron di host):
+
+```bash
+# crontab -e
+5 0 * * * cd /path/to/SakuKoperasi && ./tahu refresh_loan_status
+```
+
+### Endpoint API
+
+| Endpoint | Keterangan |
+|---|---|
+| `/api/members/` | Anggota; `POST /api/members/{id}/nonaktifkan/` |
+| `/api/jaminan/` | Jaminan anggota |
+| `/api/pinjaman-mingguan/` | Pinjaman mingguan |
+| `/api/pinjaman-bulanan/` | Pinjaman bulanan |
+| `/api/pembayaran-pinjaman/` | Pembayaran (create/list, filter `?loan=<id>`) |
+| `/api/denda-pinjaman/` | Denda (create/list, `PATCH` hanya `is_paid`) |

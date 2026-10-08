@@ -18,6 +18,8 @@ class Command(BaseCommand):
         # Check if Savings table exists
         try:
             if options['reset']:
+                # Transaksi dilindungi (PROTECT); untuk data sample hapus transaksi lebih dulu.
+                SavingsTransaction.objects.filter(savings__member__id_member='SAMPLE001').delete()
                 Member.objects.filter(id_member='SAMPLE001').delete()
                 self.stdout.write(self.style.WARNING('Sample member dihapus.'))
         except Exception as e:

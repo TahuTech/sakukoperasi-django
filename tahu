@@ -126,6 +126,7 @@ Loan rules management:
   seed_all               Run all seeders (admin + loan rules)
   seed_loan_rules        Seed default loan rules and rate tables
   reseed_loan_rules      Reset and reseed loan rules (destructive)
+  refresh_loan_status    Recalculate loan status (proses/telat/lunas); run daily
 
 Data migration helpers:
   dump       Export data to data.json from web container
@@ -191,6 +192,9 @@ case "$action" in
     ;;
   reseed_loan_rules)
     run_manage seed_loan_rules --reset
+    ;;
+  refresh_loan_status)
+    run_manage refresh_loan_status
     ;;
   seed_all)
     echo "Running all seeders..."

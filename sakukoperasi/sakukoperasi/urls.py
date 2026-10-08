@@ -18,12 +18,22 @@ from django.contrib import admin
 from django.urls import path, include
 from rest_framework.authtoken.views import obtain_auth_token
 from rest_framework.routers import DefaultRouter
-from core.views import JaminanViewSet, MemberViewSet, MonthlyLoanViewSet
+from core.views import (
+    JaminanViewSet,
+    LoanPaymentViewSet,
+    LoanPenaltyViewSet,
+    MemberViewSet,
+    MonthlyLoanViewSet,
+    WeeklyLoanViewSet,
+)
 
 router = DefaultRouter()
 router.register(r'members', MemberViewSet)
 router.register(r'jaminan', JaminanViewSet)
-router.register(r'pinjaman-bulanan', MonthlyLoanViewSet)
+router.register(r'pinjaman-bulanan', MonthlyLoanViewSet, basename='pinjaman-bulanan')
+router.register(r'pinjaman-mingguan', WeeklyLoanViewSet, basename='pinjaman-mingguan')
+router.register(r'pembayaran-pinjaman', LoanPaymentViewSet)
+router.register(r'denda-pinjaman', LoanPenaltyViewSet)
 
 urlpatterns = [
     path('admin/', admin.site.urls),

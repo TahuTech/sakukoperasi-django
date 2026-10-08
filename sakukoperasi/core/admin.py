@@ -2,7 +2,17 @@ from django import forms
 from django.contrib import admin
 from django.core.exceptions import ValidationError
 from django.utils.html import format_html
-from .models import Jaminan, LoanRateTable, LoanRule, Member, MonthlyLoan, Savings, SavingsTransaction
+from .models import (
+    Jaminan,
+    Loan,
+    LoanPayment,
+    LoanPenalty,
+    LoanRateTable,
+    LoanRule,
+    Member,
+    Savings,
+    SavingsTransaction,
+)
 
 
 def format_rupiah(amount):
@@ -17,11 +27,18 @@ admin.site.index_title = 'Dashboard Admin'
 
 @admin.register(Member)
 class MemberAdmin(admin.ModelAdmin):
-    list_display = ('id_member', 'name', 'id_week', 'id_month', 'phone_number')
+    list_display = ('id_member', 'name', 'id_week', 'id_month', 'phone_number', 'is_active')
+    list_filter = ('is_active',)
     search_fields = ('id_member', 'name', 'phone_number')
+    readonly_fields = ('inactive_date',)
+    actions = ('deactivate_members',)
     fieldsets = (
         ('Informasi Dasar', {
             'fields': ('id_member', 'name', 'phone_number', 'address'),
+        }),
+        ('Status Keanggotaan', {
+            'fields': ('is_active', 'inactive_date'),
+            'description': 'Anggota yang keluar dinonaktifkan; data tabungan & pinjaman tetap tersimpan.',
         }),
         ('ID Sistem', {
             'fields': ('id_week', 'id_month'),
@@ -29,6 +46,13 @@ class MemberAdmin(admin.ModelAdmin):
             'classes': ('collapse',),
         }),
     )
+
+    @admin.action(description='Nonaktifkan anggota terpilih')
+    def deactivate_members(self, request, queryset):
+        members = list(queryset.filter(is_active=True))
+        for member in members:
+            member.deactivate()
+        self.message_user(request, f'{len(members)} anggota dinonaktifkan.')
 
 
 @admin.register(LoanRule)
@@ -51,33 +75,73 @@ class JaminanAdmin(admin.ModelAdmin):
     search_fields = ('member__id_member', 'member__name', 'keterangan')
 
 
-@admin.register(MonthlyLoan)
-class MonthlyLoanAdmin(admin.ModelAdmin):
+class LoanPaymentInline(admin.TabularInline):
+    """Pembayaran append-only: baris lama hanya bisa dilihat."""
+    model = LoanPayment
+    extra = 1
+    fields = ('amount', 'payment_date', 'notes', 'recorded_by', 'created_at')
+    readonly_fields = ('recorded_by', 'created_at')
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+class LoanPenaltyInline(admin.TabularInline):
+    """Denda diinput manual; hapus denda belum dibayar lewat menu Denda Pinjaman."""
+    model = LoanPenalty
+    extra = 0
+    fields = ('amount', 'penalty_date', 'reason', 'is_paid', 'paid_date', 'recorded_by')
+    readonly_fields = ('recorded_by',)
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(Loan)
+class LoanAdmin(admin.ModelAdmin):
     list_display = (
-        'formatted_loan_number',
+        'formatted_number',
+        'loan_type',
         'member',
         'loan_date',
-        'loan_amount',
-        'installment_amount',
-        'installment_duration',
+        'get_loan_amount',
+        'get_remaining',
         'status',
     )
-    list_filter = ('status', 'loan_date', 'created_at')
+    list_filter = ('loan_type', 'status', 'loan_date')
     search_fields = ('member__id_member', 'member__name', 'loan_number', 'jaminan__id')
-    readonly_fields = ('loan_number', 'loan_amount', 'installment_amount', 'installment_duration', 'created_at', 'updated_at')
     autocomplete_fields = ('member', 'loan_rate_table', 'jaminan')
+    inlines = (LoanPaymentInline, LoanPenaltyInline)
+    readonly_fields = (
+        'formatted_number', 'loan_type', 'status',
+        'get_loan_amount', 'get_admin_fee', 'get_disbursed_amount', 'installment_duration',
+        'get_installment_amount', 'get_total_due', 'get_total_paid', 'get_remaining',
+        'get_unpaid_penalties', 'created_at', 'updated_at',
+    )
 
     fieldsets = (
         ('Relasi Data', {
-            'fields': ('member', 'jaminan', 'loan_rate_table'),
-            'description': 'Nomor anggota tetap menjadi relasi utama, dan jaminan harus milik anggota yang sama.',
+            'fields': ('member', 'loan_rate_table', 'jaminan'),
+            'description': (
+                'Jenis pinjaman mengikuti tarif yang dipilih. Jaminan wajib untuk pinjaman bulanan '
+                'dan harus milik anggota yang sama.'
+            ),
         }),
         ('Informasi Pinjaman', {
-            'fields': ('loan_number', 'loan_date', 'status'),
+            'fields': ('formatted_number', 'loan_type', 'loan_date', 'status'),
         }),
-        ('Nilai Turunan Dari Daftar Pinjaman', {
-            'fields': ('loan_amount', 'installment_amount', 'installment_duration'),
-            'description': 'Field ini otomatis mengikuti pilihan daftar pinjaman bulanan.',
+        ('Nilai Dari Tarif', {
+            'fields': (
+                'get_loan_amount', 'get_admin_fee', 'get_disbursed_amount',
+                'get_installment_amount', 'installment_duration',
+            ),
+            'description': 'Disalin dari tarif saat pinjaman dibuat; tidak berubah walau tarif diubah.',
+        }),
+        ('Ringkasan Pembayaran', {
+            'fields': ('get_total_due', 'get_total_paid', 'get_remaining', 'get_unpaid_penalties'),
         }),
         ('Metadata', {
             'fields': ('created_at', 'updated_at'),
@@ -85,13 +149,124 @@ class MonthlyLoanAdmin(admin.ModelAdmin):
         }),
     )
 
-    def formatted_loan_number(self, obj):
-        return f"PB-{obj.loan_number:06d}"
-    formatted_loan_number.short_description = 'No. Pinjaman'
+    def get_readonly_fields(self, request, obj=None):
+        # Anggota & tarif dikunci setelah pinjaman dibuat.
+        if obj is not None:
+            return self.readonly_fields + ('member', 'loan_rate_table')
+        return self.readonly_fields
+
+    def get_inline_instances(self, request, obj=None):
+        if obj is None:
+            return []
+        return super().get_inline_instances(request, obj)
+
+    def save_formset(self, request, form, formset, change):
+        for instance in formset.save(commit=False):
+            if instance.pk is None:
+                instance.recorded_by = request.user
+            instance.save()
+        formset.save_m2m()
 
     def get_queryset(self, request):
         qs = super().get_queryset(request)
         return qs.select_related('member', 'loan_rate_table', 'jaminan')
+
+    @admin.display(description='No. Pinjaman')
+    def formatted_number(self, obj):
+        return obj.formatted_number
+
+    @admin.display(description='Jumlah Pinjaman')
+    def get_loan_amount(self, obj):
+        return format_rupiah(obj.loan_amount)
+
+    @admin.display(description='Biaya Admin')
+    def get_admin_fee(self, obj):
+        return format_rupiah(obj.admin_fee)
+
+    @admin.display(description='Jumlah Dicairkan')
+    def get_disbursed_amount(self, obj):
+        return format_rupiah(obj.disbursed_amount)
+
+    @admin.display(description='Angsuran per Periode')
+    def get_installment_amount(self, obj):
+        return format_rupiah(obj.installment_amount)
+
+    @admin.display(description='Total Tagihan')
+    def get_total_due(self, obj):
+        return format_rupiah(obj.total_due)
+
+    @admin.display(description='Total Dibayar')
+    def get_total_paid(self, obj):
+        return format_rupiah(obj.total_paid)
+
+    @admin.display(description='Sisa Pinjaman')
+    def get_remaining(self, obj):
+        return format_rupiah(obj.remaining)
+
+    @admin.display(description='Denda Belum Dibayar')
+    def get_unpaid_penalties(self, obj):
+        return format_rupiah(obj.unpaid_penalties)
+
+
+@admin.register(LoanPayment)
+class LoanPaymentAdmin(admin.ModelAdmin):
+    list_display = ('loan', 'get_amount', 'payment_date', 'recorded_by')
+    list_filter = ('payment_date',)
+    search_fields = ('loan__loan_number', 'loan__member__id_member', 'loan__member__name')
+    autocomplete_fields = ('loan',)
+    readonly_fields = ('recorded_by', 'created_at')
+    date_hierarchy = 'payment_date'
+
+    @admin.display(description='Jumlah')
+    def get_amount(self, obj):
+        return format_rupiah(obj.amount)
+
+    def save_model(self, request, obj, form, change):
+        obj.recorded_by = request.user
+        super().save_model(request, obj, form, change)
+
+    # Pembayaran append-only.
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(LoanPenalty)
+class LoanPenaltyAdmin(admin.ModelAdmin):
+    list_display = ('loan', 'get_amount', 'penalty_date', 'is_paid', 'paid_date', 'recorded_by')
+    list_filter = ('is_paid', 'penalty_date')
+    search_fields = ('loan__loan_number', 'loan__member__id_member', 'loan__member__name', 'reason')
+    autocomplete_fields = ('loan',)
+    readonly_fields = ('recorded_by', 'created_at')
+
+    @admin.display(description='Jumlah')
+    def get_amount(self, obj):
+        return format_rupiah(obj.amount)
+
+    def get_readonly_fields(self, request, obj=None):
+        # Setelah dibuat, hanya status pembayaran yang bisa diubah.
+        if obj is not None:
+            return self.readonly_fields + ('loan', 'amount', 'penalty_date', 'reason')
+        return self.readonly_fields
+
+    def save_model(self, request, obj, form, change):
+        if not change:
+            obj.recorded_by = request.user
+        super().save_model(request, obj, form, change)
+
+    def has_delete_permission(self, request, obj=None):
+        # Denda yang sudah dibayar tidak boleh dihapus.
+        if obj is not None and obj.is_paid:
+            return False
+        return super().has_delete_permission(request, obj)
+
+    def get_actions(self, request):
+        # Hapus massal melewati validasi & update status pinjaman; hapus satu per satu saja.
+        actions = super().get_actions(request)
+        actions.pop('delete_selected', None)
+        return actions
 
 
 class SavingsAddForm(forms.ModelForm):
