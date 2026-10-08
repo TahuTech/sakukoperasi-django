@@ -1,8 +1,46 @@
-from django.db import models
+from decimal import Decimal
+
+from django.db import IntegrityError, models, transaction
 from django.db.models import IntegerField, Max
 from django.db.models.functions import Cast
 from django.core.exceptions import ValidationError
-from django.core.validators import RegexValidator
+from django.core.validators import MinValueValidator, RegexValidator
+
+
+# Jumlah percobaan ulang saat ID otomatis bentrok karena request bersamaan.
+ID_GENERATION_RETRIES = 10
+
+
+def save_with_generated_ids(generate_ids, do_save):
+    """
+    Simpan instance yang memiliki ID berurutan hasil `Max() + 1`.
+
+    Dua request bersamaan bisa menghasilkan ID yang sama; constraint unique di DB
+    akan menolak salah satunya (IntegrityError). Dalam kasus itu ID dihitung ulang
+    dan penyimpanan dicoba lagi. `generate_ids` mengembalikan True jika ada ID yang
+    dibuat otomatis; jika tidak, bentrok bukan berasal dari generator sehingga tidak di-retry.
+    """
+    for attempt in range(ID_GENERATION_RETRIES):
+        has_generated_ids = generate_ids()
+        try:
+            # Savepoint agar transaksi luar tetap bisa dipakai setelah IntegrityError.
+            with transaction.atomic():
+                do_save()
+            return
+        except IntegrityError:
+            if not has_generated_ids or attempt == ID_GENERATION_RETRIES - 1:
+                raise
+
+
+def next_sequence(queryset, field):
+    """Nilai numerik terbesar dari `field` (CharField berisi angka) + 1."""
+    max_id = (
+        queryset.filter(**{f'{field}__regex': r'^\d+$'})
+        .annotate(id_num=Cast(field, IntegerField()))
+        .aggregate(max_id=Max('id_num'))['max_id']
+        or 0
+    )
+    return max_id + 1
 
 
 class Member(models.Model):
@@ -33,45 +71,39 @@ class Member(models.Model):
         verbose_name_plural = 'Anggota'
 
     def save(self, *args, **kwargs):
-        if not self.id_week:
-            max_id = (
-                Member.objects.filter(id_week__regex=r'^\d+$')
-                .annotate(id_num=Cast('id_week', IntegerField()))
-                .aggregate(max_id=Max('id_num'))['max_id']
-                or 0
-            )
-            next_id = max_id + 1
-            if next_id > 999:
-                raise ValidationError('ID mingguan sudah mencapai batas maksimal 999.')
-            self.id_week = f"{next_id:03d}"
-        else:
+        auto_week = not self.id_week
+        auto_month = not self.id_month
+
+        if not auto_week:
             if not str(self.id_week).isdigit():
-                raise ValidationError('ID mingguan harus berisi hanya angka.')
+                raise ValidationError({'id_week': 'ID mingguan harus berisi hanya angka.'})
             normalized = int(self.id_week)
             if normalized < 1 or normalized > 999:
-                raise ValidationError('ID mingguan harus antara 001 dan 999.')
+                raise ValidationError({'id_week': 'ID mingguan harus antara 001 dan 999.'})
             self.id_week = f"{normalized:03d}"
 
-        if not self.id_month:
-            max_month = (
-                Member.objects.filter(id_month__regex=r'^\d+$')
-                .annotate(id_num=Cast('id_month', IntegerField()))
-                .aggregate(max_id=Max('id_num'))['max_id']
-                or 0
-            )
-            next_month = max_month + 1
-            if next_month > 9999:
-                raise ValidationError('ID bulanan sudah mencapai batas maksimal 9999.')
-            self.id_month = f"{next_month:04d}"
-        else:
+        if not auto_month:
             if not str(self.id_month).isdigit():
-                raise ValidationError('ID bulanan harus berisi hanya angka.')
+                raise ValidationError({'id_month': 'ID bulanan harus berisi hanya angka.'})
             normalized_month = int(self.id_month)
             if normalized_month < 1 or normalized_month > 9999:
-                raise ValidationError('ID bulanan harus antara 0001 dan 9999.')
+                raise ValidationError({'id_month': 'ID bulanan harus antara 0001 dan 9999.'})
             self.id_month = f"{normalized_month:04d}"
 
-        super().save(*args, **kwargs)
+        def generate_ids():
+            if auto_week:
+                next_id = next_sequence(Member.objects.all(), 'id_week')
+                if next_id > 999:
+                    raise ValidationError({'id_week': 'ID mingguan sudah mencapai batas maksimal 999.'})
+                self.id_week = f"{next_id:03d}"
+            if auto_month:
+                next_month = next_sequence(Member.objects.all(), 'id_month')
+                if next_month > 9999:
+                    raise ValidationError({'id_month': 'ID bulanan sudah mencapai batas maksimal 9999.'})
+                self.id_month = f"{next_month:04d}"
+            return auto_week or auto_month
+
+        save_with_generated_ids(generate_ids, lambda: super(Member, self).save(*args, **kwargs))
 
 
 class LoanRule(models.Model):
@@ -240,17 +272,24 @@ class MonthlyLoan(models.Model):
             raise ValidationError('ID jaminan harus milik anggota yang sama dengan nomor anggota pinjaman.')
 
     def save(self, *args, **kwargs):
-        if not self.loan_number:
-            max_loan_number = MonthlyLoan.objects.aggregate(max_number=Max('loan_number'))['max_number'] or 0
-            self.loan_number = max_loan_number + 1
+        auto_number = not self.loan_number
 
         if self.loan_rate_table_id:
             self.loan_amount = self.loan_rate_table.loan_amount
             self.installment_amount = self.loan_rate_table.installment_amount
             self.installment_duration = self.loan_rate_table.installment_count
 
-        self.full_clean()
-        super().save(*args, **kwargs)
+        def generate_ids():
+            if auto_number:
+                max_loan_number = MonthlyLoan.objects.aggregate(max_number=Max('loan_number'))['max_number'] or 0
+                self.loan_number = max_loan_number + 1
+            return auto_number
+
+        def do_save():
+            self.full_clean()
+            super(MonthlyLoan, self).save(*args, **kwargs)
+
+        save_with_generated_ids(generate_ids, do_save)
 
     def __str__(self):
         return f"PB-{self.loan_number:06d} - {self.member.id_member} - {self.get_status_display()}"
@@ -303,6 +342,7 @@ class SavingsTransaction(models.Model):
     amount = models.DecimalField(
         max_digits=15,
         decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.01'), 'Jumlah transaksi harus lebih dari 0.')],
         help_text='Jumlah uang transaksi',
     )
     balance_before = models.DecimalField(
@@ -324,30 +364,61 @@ class SavingsTransaction(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
+    IMMUTABLE_MESSAGE = 'Transaksi tabungan tidak dapat diubah atau dihapus. Buat transaksi koreksi.'
+
+    def clean(self):
+        """Validasi awal untuk form (admin). Pengecekan final tetap di save() dengan row lock."""
+        if not self._state.adding:
+            raise ValidationError(self.IMMUTABLE_MESSAGE)
+        if (
+            self.savings_id
+            and self.amount
+            and self.transaction_type == self.TransactionType.WITHDRAWAL
+            and self.amount > self.savings.balance
+        ):
+            raise ValidationError(
+                {'amount': f'Saldo tidak cukup. Saldo tersedia: Rp {self.savings.balance:,.0f}'}
+            )
+
     def save(self, *args, **kwargs):
-        """Otomatis hitung balance_before dan balance_after, serta update Savings."""
-        from decimal import Decimal
+        """
+        Catat transaksi dan perbarui saldo Savings secara atomik.
 
-        # Ambil saldo terakhir dari Savings
-        if not self.balance_before:
-            self.balance_before = self.savings.balance
+        Transaksi bersifat append-only: koreksi dilakukan dengan transaksi pembalik,
+        sehingga riwayat balance_before/balance_after selalu konsisten dengan saldo.
+        """
+        if not self._state.adding:
+            raise ValidationError(self.IMMUTABLE_MESSAGE)
 
-        # Hitung balance_after berdasarkan tipe transaksi
-        if self.transaction_type == self.TransactionType.DEPOSIT:
-            self.balance_after = self.balance_before + Decimal(self.amount)
-        elif self.transaction_type == self.TransactionType.WITHDRAWAL:
-            self.balance_after = self.balance_before - Decimal(self.amount)
-            if self.balance_after < 0:
-                raise ValidationError(
-                    f'Saldo tidak cukup. Saldo tersedia: Rp {self.balance_before:,.0f}'
-                )
+        amount = Decimal(self.amount)
+        if amount <= 0:
+            raise ValidationError({'amount': 'Jumlah transaksi harus lebih dari 0.'})
 
-        # Simpan transaction
-        super().save(*args, **kwargs)
+        with transaction.atomic():
+            # Kunci baris Savings agar transaksi bersamaan tidak saling menimpa saldo.
+            savings = Savings.objects.select_for_update().get(pk=self.savings_id)
+            self.balance_before = savings.balance
 
-        # Update saldo di Savings
-        self.savings.balance = self.balance_after
-        self.savings.save(update_fields=['balance', 'updated_at'])
+            if self.transaction_type == self.TransactionType.DEPOSIT:
+                self.balance_after = self.balance_before + amount
+            elif self.transaction_type == self.TransactionType.WITHDRAWAL:
+                self.balance_after = self.balance_before - amount
+                if self.balance_after < 0:
+                    raise ValidationError(
+                        {'amount': f'Saldo tidak cukup. Saldo tersedia: Rp {self.balance_before:,.0f}'}
+                    )
+            else:
+                raise ValidationError({'transaction_type': 'Jenis transaksi tidak valid.'})
+
+            super().save(*args, **kwargs)
+
+            savings.balance = self.balance_after
+            savings.save(update_fields=['balance', 'updated_at'])
+
+        self.savings = savings
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError(self.IMMUTABLE_MESSAGE)
 
     def __str__(self):
         return (

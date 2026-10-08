@@ -71,6 +71,10 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'sakukoperasi.wsgi.application'
 
+REST_FRAMEWORK = {
+    'EXCEPTION_HANDLER': 'core.exceptions.exception_handler',
+}
+
 
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
