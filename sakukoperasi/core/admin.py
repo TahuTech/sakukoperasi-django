@@ -132,6 +132,13 @@ class SavingsTransactionInline(admin.TabularInline):
     readonly_fields = ('balance_before', 'balance_after', 'created_at')
     ordering = ('-transaction_date', '-created_at')
 
+    # Transaksi append-only: baris lama hanya bisa dilihat, koreksi lewat transaksi baru.
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
 
 @admin.register(Savings)
 class SavingsAdmin(admin.ModelAdmin):
@@ -241,3 +248,10 @@ class SavingsTransactionAdmin(admin.ModelAdmin):
         """Optimize query dengan select_related."""
         qs = super().get_queryset(request)
         return qs.select_related('savings__member')
+
+    # Transaksi append-only: koreksi dilakukan dengan membuat transaksi pembalik.
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

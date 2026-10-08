@@ -33,4 +33,13 @@ if [ "${AUTO_SEED_ADMIN:-true}" = "true" ]; then
     python manage.py seed_default_admin --if-not-exists
 fi
 
-python manage.py runserver 0.0.0.0:8000
+if [ "${DJANGO_DEBUG:-false}" = "true" ]; then
+    # Development: auto-reload kode dari volume mount.
+    exec python manage.py runserver 0.0.0.0:8000
+fi
+
+python manage.py collectstatic --noinput
+exec gunicorn sakukoperasi.wsgi:application \
+    --bind 0.0.0.0:8000 \
+    --workers "${GUNICORN_WORKERS:-3}" \
+    --access-logfile -

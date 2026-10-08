@@ -1,2 +1,6 @@
-__pycache__
+**/__pycache__/
 /venv
+.env
+*.sqlite3
+sakukoperasi/staticfiles/
+sakukoperasi/data.json
