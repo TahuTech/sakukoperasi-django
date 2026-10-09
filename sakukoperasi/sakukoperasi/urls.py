@@ -18,12 +18,36 @@ from django.contrib import admin
 from django.urls import path, include
 from rest_framework.authtoken.views import obtain_auth_token
 from rest_framework.routers import DefaultRouter
-from core.views import JaminanViewSet, MemberViewSet, MonthlyLoanViewSet
+from core.views import (
+    JaminanViewSet,
+    LoanPaymentViewSet,
+    LoanPenaltyViewSet,
+    MemberSavingsAccountViewSet,
+    MemberViewSet,
+    MonthlyLoanViewSet,
+    NasabahViewSet,
+    SavingsDueRateViewSet,
+    SavingsInterestRuleViewSet,
+    SavingsProductViewSet,
+    SavingsTransactionViewSet,
+    SavingsViewSet,
+    WeeklyLoanViewSet,
+)
 
 router = DefaultRouter()
 router.register(r'members', MemberViewSet)
 router.register(r'jaminan', JaminanViewSet)
-router.register(r'pinjaman-bulanan', MonthlyLoanViewSet)
+router.register(r'pinjaman-bulanan', MonthlyLoanViewSet, basename='pinjaman-bulanan')
+router.register(r'pinjaman-mingguan', WeeklyLoanViewSet, basename='pinjaman-mingguan')
+router.register(r'pembayaran-pinjaman', LoanPaymentViewSet)
+router.register(r'denda-pinjaman', LoanPenaltyViewSet)
+router.register(r'nasabah', NasabahViewSet)
+router.register(r'rekening-simpanan', SavingsViewSet)
+router.register(r'transaksi-simpanan', SavingsTransactionViewSet)
+router.register(r'jenis-simpanan', SavingsProductViewSet)
+router.register(r'aturan-bunga', SavingsInterestRuleViewSet)
+router.register(r'akun-simpanan-anggota', MemberSavingsAccountViewSet)
+router.register(r'nominal-simpanan', SavingsDueRateViewSet)
 
 urlpatterns = [
     path('admin/', admin.site.urls),

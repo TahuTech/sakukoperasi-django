@@ -97,14 +97,18 @@ class Command(BaseCommand):
         parser.add_argument(
             '--reset',
             action='store_true',
-            help='Delete existing loan rules and rate tables before seeding.',
+            help='Delete rate tables that are not used by any loan before seeding.',
         )
 
     def handle(self, *args, **options):
         if options['reset']:
-            LoanRateTable.objects.all().delete()
-            LoanRule.objects.all().delete()
-            self.stdout.write(self.style.WARNING('Existing loan rules cleared.'))
+            # Tarif yang sudah dipakai pinjaman dilindungi (PROTECT), jadi hanya hapus yang belum terpakai.
+            unused = LoanRateTable.objects.filter(loans__isnull=True)
+            deleted, _ = unused.delete()
+            kept = LoanRateTable.objects.count()
+            self.stdout.write(self.style.WARNING(f'{deleted} unused rate tables cleared.'))
+            if kept:
+                self.stdout.write(self.style.WARNING(f'{kept} rate tables kept because they are used by loans.'))
 
         for data in LOAN_RULES:
             rule, created = LoanRule.objects.update_or_create(
