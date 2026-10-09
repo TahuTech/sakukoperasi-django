@@ -56,6 +56,13 @@ def add_months(value, months):
     return value.replace(year=year, month=month, day=day)
 
 
+def rupiah(amount):
+    """Format Rupiah Indonesia: Rp 1.250.000 (pemisah ribuan titik)."""
+    if amount is None:
+        return '-'
+    return f"Rp {amount:,.0f}".replace(',', '.')
+
+
 def positive_amount_validator(label):
     return MinValueValidator(Decimal('0.01'), f'{label} harus lebih dari 0.')
 
@@ -576,14 +583,14 @@ class LoanPayment(models.Model):
         verbose_name_plural = 'Pembayaran Pinjaman'
 
     def __str__(self):
-        return f"{self.loan.formatted_number} - Rp {self.amount:,.0f} ({self.payment_date})"
+        return f"{self.loan.formatted_number} - {rupiah(self.amount)} ({self.payment_date})"
 
     def clean(self):
         """Validasi awal untuk form; pengecekan final tetap di save() dengan row lock."""
         if not self._state.adding:
             raise ValidationError(self.IMMUTABLE_MESSAGE)
         if self.loan_id and self.amount and self.amount > self.loan.remaining:
-            raise ValidationError({'amount': f'Melebihi sisa pinjaman (Rp {self.loan.remaining:,.0f}).'})
+            raise ValidationError({'amount': f'Melebihi sisa pinjaman ({rupiah(self.loan.remaining)}).'})
 
     def save(self, *args, **kwargs):
         if not self._state.adding:
@@ -595,7 +602,7 @@ class LoanPayment(models.Model):
             # Kunci pinjaman agar pembayaran bersamaan tidak melebihi sisa tagihan.
             loan = Loan.objects.select_for_update().get(pk=self.loan_id)
             if Decimal(self.amount) > loan.remaining:
-                raise ValidationError({'amount': f'Melebihi sisa pinjaman (Rp {loan.remaining:,.0f}).'})
+                raise ValidationError({'amount': f'Melebihi sisa pinjaman ({rupiah(loan.remaining)}).'})
             super().save(*args, **kwargs)
             loan.refresh_status()
         self.loan = loan
@@ -644,7 +651,7 @@ class LoanPenalty(models.Model):
 
     def __str__(self):
         status = 'lunas' if self.is_paid else 'belum dibayar'
-        return f"{self.loan.formatted_number} - Denda Rp {self.amount:,.0f} ({status})"
+        return f"{self.loan.formatted_number} - Denda {rupiah(self.amount)} ({status})"
 
     def clean(self):
         if self._state.adding:
@@ -759,7 +766,7 @@ class SavingsDueRate(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.product} Rp {self.amount:,.0f} mulai {self.effective_from}"
+        return f"{self.product} {rupiah(self.amount)} mulai {self.effective_from}"
 
     def clean(self):
         if self.product_id and self.product.billing == SavingsProduct.Billing.NONE:
@@ -951,7 +958,7 @@ class Savings(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.account_number} - {self.nasabah.name} (Rp {self.balance:,.0f})"
+        return f"{self.account_number} - {self.nasabah.name} ({rupiah(self.balance)})"
 
     def clean(self):
         self.account_number = (self.account_number or '').strip()
@@ -963,7 +970,7 @@ class Savings(models.Model):
         with transaction.atomic():
             locked = Savings.objects.select_for_update().get(pk=self.pk)
             if locked.balance != 0:
-                raise ValidationError(f'Rekening masih bersaldo Rp {locked.balance:,.0f}; tarik saldo dulu sebelum ditutup.')
+                raise ValidationError(f'Rekening masih bersaldo {rupiah(locked.balance)}; tarik saldo dulu sebelum ditutup.')
             locked.is_active = False
             locked.closed_date = on_date or timezone.localdate()
             locked.save(update_fields=['is_active', 'closed_date', 'updated_at'])
@@ -1083,8 +1090,8 @@ class SavingsTransaction(models.Model):
             available = max(savings.balance - product.min_balance, Decimal('0'))
             if Decimal(self.amount) > available:
                 raise ValidationError({'amount': (
-                    f'Saldo tidak cukup. Saldo dapat ditarik: Rp {available:,.0f} '
-                    f'(saldo Rp {savings.balance:,.0f}, saldo mengendap Rp {product.min_balance:,.0f}).'
+                    f'Saldo tidak cukup. Saldo dapat ditarik: {rupiah(available)} '
+                    f'(saldo {rupiah(savings.balance)}, saldo mengendap {rupiah(product.min_balance)}).'
                 )})
 
     def clean(self):
@@ -1131,7 +1138,7 @@ class SavingsTransaction(models.Model):
         return (
             f"{self.get_transaction_type_display()} - "
             f"{self.savings.account_number} - "
-            f"Rp {self.amount:,.0f} ({self.transaction_date})"
+            f"{rupiah(self.amount)} ({self.transaction_date})"
         )
 
 

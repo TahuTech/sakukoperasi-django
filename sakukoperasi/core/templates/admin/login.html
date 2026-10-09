@@ -9,10 +9,12 @@
 {% block bodyclass %}{{ block.super }} login custom-admin-login{% endblock %}
 {% block usertools %}{% endblock %}
 {% block nav-global %}{% endblock %}
+{% block nav-sidebar %}{% endblock %}
+{% block nav-breadcrumbs %}{% endblock %}
 
 {% block content_title %}
-<h1>Masuk ke Admin SakuKoperasi</h1>
-<p class="subtitle">Kelola data anggota dan operasional koperasi dengan aman.</p>
+<h1>Masuk</h1>
+<p class="subtitle">Kelola anggota, pinjaman, dan simpanan koperasi.</p>
 {% endblock %}
 
 {% block content %}
@@ -42,7 +44,7 @@
         <input type="hidden" name="next" value="{{ next }}">
       </div>
       <div class="submit-row">
-        <input type="submit" value="{% translate 'Log in' %}">
+        <input type="submit" value="Masuk">
       </div>
     </form>
   </div>

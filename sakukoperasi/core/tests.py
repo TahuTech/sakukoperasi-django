@@ -30,6 +30,7 @@ from .models import (
     SavingsProduct,
     SavingsTransaction,
     add_months,
+    rupiah,
 )
 from .member_savings import deposit, process_exit, summary
 from .savings_interest import calculate_interest, post_monthly_interest
@@ -179,6 +180,13 @@ class LoanTestMixin:
 
     def pay(self, loan, amount):
         return LoanPayment.objects.create(loan=loan, amount=Decimal(amount), payment_date=date(2026, 1, 1))
+
+
+class RupiahFormatTests(TestCase):
+    def test_format(self):
+        self.assertEqual(rupiah(Decimal('1250000.40')), 'Rp 1.250.000')
+        self.assertEqual(rupiah(Decimal('0')), 'Rp 0')
+        self.assertEqual(rupiah(None), '-')
 
 
 class AddMonthsTests(TestCase):
@@ -1129,3 +1137,51 @@ class ApiPaginationFilterTests(LoanTestMixin, TestCase):
         self.assertEqual(self.client.get(url, {'transaction_date_before': '2026-02-15'}).json()['count'], 1)
         ordered = self.client.get(url, {'ordering': 'transaction_date'}).json()['results']
         self.assertEqual([r['transaction_type'] for r in ordered], ['deposit', 'withdrawal'])
+
+
+class AdminUiTests(LoanTestMixin, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.admin_user = get_user_model().objects.create_superuser('admin', 'a@a.id', 'Rahasia-Kuat-123')
+        self.client.force_login(self.admin_user)
+
+    def test_custom_templates_and_theme_are_used(self):
+        # Regresi: app core harus di atas admin di INSTALLED_APPS agar template kustom terpakai.
+        response = self.client.get('/admin/')
+        self.assertContains(response, 'core/admin-theme.css')
+        self.assertContains(response, 'sk-brand')
+        self.client.logout()
+        login = self.client.get('/admin/login/')
+        self.assertContains(login, 'login-card')
+        self.assertNotContains(login, 'nav-sidebar')
+
+    def test_menu_is_grouped_by_domain(self):
+        groups = [app['name'] for app in self.client.get('/admin/').context['app_list']]
+        self.assertEqual(groups[:4], ['Anggota', 'Pinjaman', 'Simpanan', 'Pengaturan'])
+
+    def test_dashboard_cards(self):
+        loan = self.create_weekly(loan_date=date(2026, 1, 1))
+        loan.refresh_status()
+        LoanPenalty.objects.create(loan=loan, amount=Decimal('5000'), reason='Telat')
+
+        cards = {card['label']: card for card in self.client.get('/admin/').context['dashboard_cards']}
+        self.assertEqual(cards['Pinjaman berjalan']['value'], 1)
+        self.assertEqual(cards['Pinjaman berjalan']['money'], loan.total_due)
+        self.assertEqual(cards['Pinjaman telat']['value'], 1)
+        self.assertEqual(cards['Denda belum dibayar']['money'], Decimal('5000'))
+        self.assertEqual(cards['Belum punya akun simpanan']['value'], 1)
+
+        # Tautan kartu harus valid
+        for card in cards.values():
+            self.assertEqual(self.client.get(card['url']).status_code, 200, card['url'])
+
+    def test_dashboard_respects_permissions(self):
+        staff = get_user_model().objects.create_user('petugas', password='Rahasia-Kuat-123', is_staff=True)
+        staff.user_permissions.add(Permission.objects.get(codename='view_member'))
+        self.client.force_login(staff)
+        labels = [card['label'] for card in self.client.get('/admin/').context['dashboard_cards']]
+        self.assertEqual(labels, ['Anggota aktif', 'Belum punya akun simpanan'])
+
+    def test_loan_status_badge(self):
+        self.create_weekly(loan_date=date(2026, 1, 1)).refresh_status()
+        self.assertContains(self.client.get('/admin/member/loan/'), 'sk-badge sk-tone-danger')

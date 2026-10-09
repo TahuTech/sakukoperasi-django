@@ -46,7 +46,9 @@ CSRF_TRUSTED_ORIGINS = env_list('DJANGO_CSRF_TRUSTED_ORIGINS')
 # Application definition
 
 INSTALLED_APPS = [
-    'django.contrib.admin',
+    # core harus di atas admin agar template admin/* milik core menimpa template bawaan.
+    'core.apps.CoreConfig',
+    'core.apps.SakuAdminConfig',  # pengganti django.contrib.admin
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
@@ -55,7 +57,6 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework.authtoken',
     'django_filters',
-    'core.apps.CoreConfig',
 ]
 
 MIDDLEWARE = [
