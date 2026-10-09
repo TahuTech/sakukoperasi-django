@@ -1,5 +1,6 @@
 from django.contrib import admin, messages
 from django.core.exceptions import ValidationError
+from django.urls import reverse
 from django.utils.html import format_html, format_html_join
 from .member_savings import process_exit, summary
 from .models import (
@@ -17,18 +18,25 @@ from .models import (
     SavingsInterestRule,
     SavingsProduct,
     SavingsTransaction,
+    rupiah,
 )
 
 
-def format_rupiah(amount):
-    """Format angka menjadi tampilan Rupiah."""
-    if amount is None:
-        return '-'
-    return f"Rp {amount:,.0f}".replace(',', '.')
+# Alias untuk tampilan admin; format tunggal ada di models.rupiah.
+format_rupiah = rupiah
 
-admin.site.site_header = 'SakuKoperasi Administration'
-admin.site.site_title = 'SakuKoperasi Admin'
-admin.site.index_title = 'Dashboard Admin'
+
+def status_badge(text, tone):
+    """Label berwarna (success/warning/danger/neutral); gaya di core/static/core/admin-theme.css."""
+    return format_html('<span class="sk-badge sk-tone-{}">{}</span>', tone, text)
+
+
+LOAN_STATUS_TONES = {
+    Loan.LoanStatus.LUNAS: 'success',
+    Loan.LoanStatus.PROSES: 'neutral',
+    Loan.LoanStatus.TELAT: 'danger',
+}
+
 
 class HasMemberSavingsAccountFilter(admin.SimpleListFilter):
     title = 'Akun simpanan pokok & wajib'
@@ -83,15 +91,32 @@ class MemberAdmin(admin.ModelAdmin):
 
 @admin.register(LoanRule)
 class LoanRuleAdmin(admin.ModelAdmin):
-    list_display = ('loan_type', 'max_loan_amount', 'max_installments', 'interest_rate')
+    list_display = ('loan_type', 'get_max_loan_amount', 'max_installments', 'interest_rate')
     list_filter = ('loan_type',)
+
+    @admin.display(description='Maks. Pinjaman', ordering='max_loan_amount')
+    def get_max_loan_amount(self, obj):
+        return format_rupiah(obj.max_loan_amount)
 
 
 @admin.register(LoanRateTable)
 class LoanRateTableAdmin(admin.ModelAdmin):
-    list_display = ('loan_rule', 'loan_amount', 'installment_count', 'installment_amount', 'admin_fee')
+    list_display = ('loan_rule', 'get_amount', 'installment_count', 'get_installment_amount', 'get_admin_fee')
     list_filter = ('loan_rule__loan_type',)
     search_fields = ('loan_rule__loan_type',)
+    list_select_related = ('loan_rule',)
+
+    @admin.display(description='Jumlah Pinjaman', ordering='loan_amount')
+    def get_amount(self, obj):
+        return format_rupiah(obj.loan_amount)
+
+    @admin.display(description='Angsuran', ordering='installment_amount')
+    def get_installment_amount(self, obj):
+        return format_rupiah(obj.installment_amount)
+
+    @admin.display(description='Biaya Admin', ordering='admin_fee')
+    def get_admin_fee(self, obj):
+        return format_rupiah(obj.admin_fee)
 
 
 @admin.register(Jaminan)
@@ -128,14 +153,14 @@ class LoanPenaltyInline(admin.TabularInline):
 
 @admin.register(Loan)
 class LoanAdmin(admin.ModelAdmin):
+    # Status di depan agar tetap terlihat walau tabel perlu digeser di layar sempit.
     list_display = (
         'number_label',
-        'loan_type',
         'member',
+        'loan_type',
+        'get_status',
         'loan_date',
-        'get_loan_amount',
         'get_remaining',
-        'status',
     )
     list_filter = ('loan_type', 'status', 'loan_date')
     search_fields = ('member__id_member', 'member__name', 'loan_number', 'jaminan__id')
@@ -201,6 +226,10 @@ class LoanAdmin(admin.ModelAdmin):
     @admin.display(description='No. Pinjaman', ordering='loan_number')
     def number_label(self, obj):
         return obj.number_label
+
+    @admin.display(description='Status', ordering='status')
+    def get_status(self, obj):
+        return status_badge(obj.get_status_display(), LOAN_STATUS_TONES.get(obj.status, 'neutral'))
 
     @admin.display(description='Jumlah Pinjaman')
     def get_loan_amount(self, obj):
@@ -534,11 +563,16 @@ class MemberSubAccountInline(admin.TabularInline):
     model = Savings
     fk_name = 'member_account'
     extra = 0
-    fields = ('account_number', 'product', 'get_balance', 'is_active')
+    fields = ('get_account_link', 'product', 'get_balance', 'is_active')
     readonly_fields = fields
-    show_change_link = True
+    classes = ('sk-subaccounts',)
     verbose_name = 'Sub-rekening'
-    verbose_name_plural = 'Sub-rekening (klik untuk transaksi)'
+    verbose_name_plural = 'Sub-rekening (klik nomor untuk transaksi)'
+
+    @admin.display(description='Nomor Rekening')
+    def get_account_link(self, obj):
+        url = reverse('admin:member_savings_change', args=[obj.pk])
+        return format_html('<a href="{}">{}</a>', url, obj.account_number)
 
     @admin.display(description='Saldo')
     def get_balance(self, obj):
@@ -579,7 +613,10 @@ class MemberSavingsAccountAdmin(admin.ModelAdmin):
         return self.readonly_fields
 
     def _info(self, obj, code, key):
-        return format_rupiah(summary(obj).get(code, {}).get(key))
+        value = summary(obj).get(code, {}).get(key)
+        if key == 'tunggakan' and value:
+            return status_badge(format_rupiah(value), 'warning')
+        return format_rupiah(value)
 
     @admin.display(description='Saldo Pokok')
     def get_pokok_balance(self, obj):

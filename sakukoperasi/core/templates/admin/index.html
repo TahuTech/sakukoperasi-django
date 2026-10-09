@@ -1,0 +1,22 @@
+{% extends "admin/index.html" %}
+
+{% block content %}
+{# Kartu berada di dalam #content-main.app-list (sama seperti daftar menu) agar gaya link bawaan Django tidak menggarisbawahinya. #}
+<div id="content-main" class="app-list">
+  {% if dashboard_cards %}
+  <section class="sk-dashboard" aria-label="Ringkasan">
+    {% for card in dashboard_cards %}
+    <a class="sk-card sk-tone-{{ card.tone }}" href="{{ card.url }}">
+      <span class="sk-card-label">{{ card.label }}</span>
+      {% if card.value is not None %}<span class="sk-card-value">{{ card.value|floatformat:"0g" }}</span>{% endif %}
+      {% if card.money is not None %}
+        <span class="{% if card.value is not None %}sk-card-money{% else %}sk-card-value{% endif %}">Rp {{ card.money|floatformat:"0g" }}</span>
+      {% endif %}
+      <span class="sk-card-note">{{ card.note }}</span>
+    </a>
+    {% endfor %}
+  </section>
+  {% endif %}
+  {% include "admin/app_list.html" with app_list=app_list show_changelinks=True %}
+</div>
+{% endblock %}

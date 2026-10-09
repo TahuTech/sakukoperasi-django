@@ -1,13 +1,23 @@
 {% extends "admin/base.html" %}
 {% load i18n static %}
 
+{% block title %}{% if subtitle %}{{ subtitle }} | {% endif %}{{ title }} | {{ site_title|default:_('Django site admin') }}{% endblock %}
+
 {% block extrastyle %}
 {{ block.super }}
 <link rel="stylesheet" href="{% static 'core/admin-theme.css' %}">
 {% endblock %}
 
 {% block branding %}
-<h1 id="site-name"><a href="{% url 'admin:index' %}">SakuKoperasi Admin Console</a></h1>
+<div id="site-name">
+  <a href="{% url 'admin:index' %}" class="sk-brand">
+    <span class="sk-brand-mark" aria-hidden="true">SK</span>
+    <span class="sk-brand-text">{{ site_header|default:_('Django administration') }}</span>
+  </a>
+</div>
+{% if user.is_anonymous %}
+  {% include "admin/color_theme_toggle.html" %}
+{% endif %}
 {% endblock %}
 
 {% block nav-global %}{% endblock %}

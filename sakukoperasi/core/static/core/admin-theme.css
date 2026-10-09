@@ -1,105 +1,278 @@
+/*
+ * Tema SakuKoperasi untuk Django admin.
+ *
+ * Warna diatur lewat variabel CSS bawaan Django admin, sehingga mode terang, mode gelap
+ * (otomatis maupun lewat tombol tema) dan seluruh komponen bawaan ikut konsisten.
+ * Selektor dark mode mengikuti pola admin/css/dark_mode.css.
+ */
+
+/* ---------- Mode terang ---------- */
+html[data-theme="light"],
 :root {
-  --sk-bg: #f3f7f6;
-  --sk-bg-soft: #e8f0ec;
+  --sk-brand: #1f7a56;
+  --sk-brand-strong: #17603f;
+  --sk-brand-soft: #e7f3ed;
   --sk-surface: #ffffff;
-  --sk-surface-muted: #f7fbf9;
-  --sk-text: #1d2a24;
-  --sk-text-muted: #577064;
-  --sk-border: #c8dbd2;
-  --sk-primary: #1f7a56;
-  --sk-primary-strong: #185f43;
-  --sk-accent: #ef8f1a;
-  --sk-shadow: 0 12px 28px rgba(17, 63, 44, 0.12);
+  --sk-page: #f5f7f6;
+  --sk-ink: #1d2a24;
+  --sk-muted: #5b6f66;
+  --sk-line: #dbe5e0;
+  --sk-shadow: 0 1px 2px rgba(16, 40, 30, 0.06), 0 1px 3px rgba(16, 40, 30, 0.08);
+
+  --sk-success-fg: #166534;
+  --sk-success-bg: #dcfce7;
+  --sk-warning-fg: #92400e;
+  --sk-warning-bg: #fef3c7;
+  --sk-danger-fg: #991b1b;
+  --sk-danger-bg: #fee2e2;
+  --sk-neutral-fg: #334155;
+  --sk-neutral-bg: #eef2f1;
+
+  --primary: var(--sk-brand);
+  --secondary: var(--sk-brand-strong);
+  --accent: #f4b740;
+  --primary-fg: #ffffff;
+
+  --body-fg: var(--sk-ink);
+  --body-bg: var(--sk-page);
+  --body-quiet-color: var(--sk-muted);
+  --body-medium-color: #3d4f47;
+  --body-loud-color: #0f1a15;
+
+  --header-color: #e7f3ed;
+  --header-branding-color: #ffffff;
+  --header-bg: var(--sk-brand-strong);
+  --header-link-color: #ffffff;
+
+  --breadcrumbs-fg: var(--sk-muted);
+  --breadcrumbs-link-fg: var(--sk-brand-strong);
+  --breadcrumbs-bg: var(--sk-brand-soft);
+
+  --link-fg: var(--sk-brand);
+  --link-hover-color: var(--sk-brand-strong);
+  --link-selected-fg: var(--sk-brand-strong);
+
+  --hairline-color: var(--sk-line);
+  --border-color: #c9d6d0;
+
+  --darkened-bg: #eef3f1;
+  --selected-bg: #dcebe4;
+  --selected-row: #fff8e1;
+
+  --button-fg: #ffffff;
+  --button-bg: var(--sk-brand);
+  --button-hover-bg: var(--sk-brand-strong);
+  --default-button-bg: var(--sk-brand-strong);
+  --default-button-hover-bg: #114a31;
+
+  --object-tools-fg: #ffffff;
+  --object-tools-bg: var(--sk-brand);
+  --object-tools-hover-bg: var(--sk-brand-strong);
+
+  --message-success-bg: var(--sk-success-bg);
+  --message-warning-bg: var(--sk-warning-bg);
+  --message-error-bg: var(--sk-danger-bg);
 }
 
-html, body {
-  background: radial-gradient(circle at right top, var(--sk-bg-soft) 0%, var(--sk-bg) 48%, #fcfefd 100%);
-  color: var(--sk-text);
+/* ---------- Mode gelap ---------- */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --sk-brand: #3fb886;
+    --sk-brand-strong: #2a9a6d;
+    --sk-brand-soft: #1b2a24;
+    --sk-surface: #1c2421;
+    --sk-page: #121816;
+    --sk-ink: #e3ece8;
+    --sk-muted: #9db1a8;
+    --sk-line: #2c3a34;
+    --sk-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+
+    --sk-success-fg: #86efac;
+    --sk-success-bg: #14321f;
+    --sk-warning-fg: #fcd34d;
+    --sk-warning-bg: #3a2c0b;
+    --sk-danger-fg: #fca5a5;
+    --sk-danger-bg: #3b1515;
+    --sk-neutral-fg: #cbd5e1;
+    --sk-neutral-bg: #232d2a;
+
+    --primary: #2a9a6d;
+    --secondary: #1d6b4b;
+    --primary-fg: #f2fbf7;
+    --body-fg: var(--sk-ink);
+    --body-bg: var(--sk-page);
+    --body-quiet-color: var(--sk-muted);
+    --body-medium-color: #c3d2cb;
+    --body-loud-color: #ffffff;
+    --header-bg: #0f2c20;
+    --header-color: #b9d6c8;
+    --breadcrumbs-fg: var(--sk-muted);
+    --breadcrumbs-link-fg: #7fd3ad;
+    --breadcrumbs-bg: #18231f;
+    --link-fg: #6fd0a5;
+    --link-hover-color: #a3e6c8;
+    --link-selected-fg: #a3e6c8;
+    --hairline-color: var(--sk-line);
+    --border-color: #3a4a43;
+    --darkened-bg: #18201d;
+    --selected-bg: #24362e;
+    --selected-row: #2e2a17;
+    --button-bg: #2a9a6d;
+    --button-hover-bg: #238259;
+    --default-button-bg: #238259;
+    --default-button-hover-bg: #1b6a48;
+    --object-tools-bg: #2a9a6d;
+    --object-tools-hover-bg: #238259;
+    --message-success-bg: var(--sk-success-bg);
+    --message-warning-bg: var(--sk-warning-bg);
+    --message-error-bg: var(--sk-danger-bg);
+  }
 }
 
+html[data-theme="dark"] {
+  --sk-brand: #3fb886;
+  --sk-brand-strong: #2a9a6d;
+  --sk-brand-soft: #1b2a24;
+  --sk-surface: #1c2421;
+  --sk-page: #121816;
+  --sk-ink: #e3ece8;
+  --sk-muted: #9db1a8;
+  --sk-line: #2c3a34;
+  --sk-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+
+  --sk-success-fg: #86efac;
+  --sk-success-bg: #14321f;
+  --sk-warning-fg: #fcd34d;
+  --sk-warning-bg: #3a2c0b;
+  --sk-danger-fg: #fca5a5;
+  --sk-danger-bg: #3b1515;
+  --sk-neutral-fg: #cbd5e1;
+  --sk-neutral-bg: #232d2a;
+
+  --primary: #2a9a6d;
+  --secondary: #1d6b4b;
+  --primary-fg: #f2fbf7;
+  --body-fg: var(--sk-ink);
+  --body-bg: var(--sk-page);
+  --body-quiet-color: var(--sk-muted);
+  --body-medium-color: #c3d2cb;
+  --body-loud-color: #ffffff;
+  --header-bg: #0f2c20;
+  --header-color: #b9d6c8;
+  --breadcrumbs-fg: var(--sk-muted);
+  --breadcrumbs-link-fg: #7fd3ad;
+  --breadcrumbs-bg: #18231f;
+  --link-fg: #6fd0a5;
+  --link-hover-color: #a3e6c8;
+  --link-selected-fg: #a3e6c8;
+  --hairline-color: var(--sk-line);
+  --border-color: #3a4a43;
+  --darkened-bg: #18201d;
+  --selected-bg: #24362e;
+  --selected-row: #2e2a17;
+  --button-bg: #2a9a6d;
+  --button-hover-bg: #238259;
+  --default-button-bg: #238259;
+  --default-button-hover-bg: #1b6a48;
+  --object-tools-bg: #2a9a6d;
+  --object-tools-hover-bg: #238259;
+  --message-success-bg: var(--sk-success-bg);
+  --message-warning-bg: var(--sk-warning-bg);
+  --message-error-bg: var(--sk-danger-bg);
+}
+
+/* ---------- Header & branding ---------- */
 #header {
-  background: linear-gradient(120deg, #184f3a 0%, #1f7a56 62%, #299568 100%);
-  color: #ffffff;
-  box-shadow: 0 4px 16px rgba(16, 60, 41, 0.28);
+  padding-block: 10px;
 }
 
-#branding h1,
-#branding h1 a:link,
-#branding h1 a:visited {
-  color: #ffffff;
+.sk-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+}
+
+.sk-brand-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #3b2a05;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+}
+
+.sk-brand-text {
+  color: var(--header-branding-color);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+/* ---------- Panel & tabel ---------- */
+.module,
+.inline-group,
+#changelist .changelist-form-container,
+#changelist-filter {
+  border-radius: 10px;
+}
+
+.module,
+.inline-group {
+  background: var(--sk-surface);
+  border: 1px solid var(--hairline-color);
+  box-shadow: var(--sk-shadow);
+}
+
+/* Tanpa overflow:hidden (memotong tabel daftar); sudut atas judul dibulatkan sendiri. */
+.module > h2:first-child,
+.module > caption,
+.module > table > caption,
+.inline-group > h2:first-child,
+fieldset.module > h2.fieldset-heading {
+  border-radius: 9px 9px 0 0;
+}
+
+/* Judul grup menu (dasbor & sidebar): latar hijau muda, teks gelap agar terbaca. */
+.app-list .module caption,
+#nav-sidebar .module caption {
+  background: var(--sk-brand-soft);
   font-weight: 700;
   letter-spacing: 0.4px;
 }
 
-#user-tools,
-#user-tools a,
-#user-tools a:visited {
-  color: #e8fff4;
+.app-list .module caption a.section:link,
+.app-list .module caption a.section:visited,
+#nav-sidebar .module caption a.section:link,
+#nav-sidebar .module caption a.section:visited {
+  color: var(--body-loud-color);
 }
 
-#user-tools a:hover {
-  color: #ffffff;
-  text-decoration: underline;
+/* Panel samping dasbor tanpa latar tambahan */
+.dashboard #content-related {
+  background: transparent;
 }
 
-div.breadcrumbs {
-  background: #eef6f2;
-  border-bottom: 1px solid var(--sk-border);
-  color: var(--sk-text-muted);
+#changelist .results {
+  overflow-x: auto;
 }
 
-#content {
-  padding-top: 18px;
+/* Sub-rekening di akun simpanan anggota: judul objek bawaan disembunyikan (nomor sudah jadi tautan). */
+.sk-subaccounts td.original p {
+  display: none;
 }
 
-#content-main,
-.module,
-.inline-group,
-.submit-row,
-.dashboard .module,
-.change-form .module {
-  border-radius: 14px;
+.sk-subaccounts tr.has_original td {
+  padding-top: 8px;
 }
 
-.module,
-.inline-group,
-.submit-row,
-.object-tools,
-.results,
-.dashboard #content {
-  box-shadow: var(--sk-shadow);
-}
-
-.module,
-.inline-group,
-.submit-row,
-#changelist-filter,
-#changelist .paginator,
-.object-tools,
-.dashboard .module,
-.change-form .module {
+#changelist-filter {
   background: var(--sk-surface);
-  border: 1px solid var(--sk-border);
-}
-
-.module h2,
-.module caption,
-.inline-group h2,
-.dashboard .module caption {
-  background: linear-gradient(135deg, #1d6e4d 0%, #24875f 100%);
-  color: #ffffff;
-  border-radius: 10px 10px 0 0;
-  font-weight: 600;
-}
-
-a:link,
-a:visited {
-  color: #1c6b4c;
-}
-
-a:hover,
-a:focus {
-  color: #14543a;
+  border: 1px solid var(--hairline-color);
 }
 
 .button,
@@ -107,90 +280,137 @@ input[type=submit],
 input[type=button],
 .submit-row input,
 a.button {
-  background: linear-gradient(135deg, var(--sk-primary) 0%, #2c976c 100%);
-  color: #ffffff;
-  border: 0;
-  border-radius: 9px;
-  box-shadow: 0 8px 20px rgba(23, 93, 65, 0.22);
-}
-
-.button.default,
-input[type=submit].default,
-.submit-row input.default {
-  background: linear-gradient(135deg, #1a6a4b 0%, #24815b 100%);
-}
-
-.button:hover,
-input[type=submit]:hover,
-input[type=button]:hover,
-.submit-row input:hover,
-a.button:hover {
-  background: linear-gradient(135deg, var(--sk-primary-strong) 0%, #1f7755 100%);
+  border-radius: 8px;
 }
 
 input, textarea, select, .vTextField {
-  border-radius: 8px;
-  border: 1px solid var(--sk-border);
-  background: #fcfffd;
+  border-radius: 6px;
 }
 
-input:focus, textarea:focus, select:focus {
-  border-color: var(--sk-primary);
-  outline: 2px solid rgba(31, 122, 86, 0.18);
+input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: 2px solid var(--primary);
   outline-offset: 1px;
-}
-
-thead th {
-  background: #edf6f1;
-  border-bottom: 1px solid var(--sk-border);
-}
-
-tr:nth-child(even) {
-  background: var(--sk-surface-muted);
-}
-
-#changelist-filter h2 {
-  background: #ecf5f0;
-  color: var(--sk-text);
-  border-bottom: 1px solid var(--sk-border);
-}
-
-.paginator {
-  border-radius: 10px;
-}
-
-.paginator a,
-.paginator .this-page {
-  border-radius: 8px;
 }
 
 .object-tools a:link,
 .object-tools a:visited {
-  background: linear-gradient(135deg, #e88411 0%, var(--sk-accent) 100%);
   border-radius: 8px;
 }
 
-.object-tools a:hover,
-.object-tools a:focus {
-  background: linear-gradient(135deg, #d5780a 0%, #e08113 100%);
+/* ---------- Badge status ---------- */
+.sk-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
 }
 
-#footer {
-  color: #5e766a;
+.sk-badge.sk-tone-success { color: var(--sk-success-fg); background: var(--sk-success-bg); }
+.sk-badge.sk-tone-warning { color: var(--sk-warning-fg); background: var(--sk-warning-bg); }
+.sk-badge.sk-tone-danger  { color: var(--sk-danger-fg);  background: var(--sk-danger-bg); }
+.sk-badge.sk-tone-neutral { color: var(--sk-neutral-fg); background: var(--sk-neutral-bg); }
+
+/* Nominal rata kanan & angka sejajar */
+td.field-get_amount, td.field-get_remaining, td.field-get_loan_amount,
+td.field-get_balance_rupiah, td.field-get_amount_rupiah,
+td.field-get_balance_before_rupiah, td.field-get_balance_after_rupiah,
+td.field-get_pokok_balance, td.field-get_pokok_arrears,
+td.field-get_wajib_balance, td.field-get_wajib_arrears {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-@media (max-width: 900px) {
-  #header {
-    padding: 14px 10px;
+/* ---------- Dasbor ---------- */
+.sk-dashboard {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.sk-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  background: var(--sk-surface);
+  border: 1px solid var(--hairline-color);
+  border-left: 4px solid var(--sk-neutral-fg);
+  border-radius: 10px;
+  box-shadow: var(--sk-shadow);
+  text-decoration: none;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.sk-card:link,
+.sk-card:visited {
+  color: var(--body-fg);
+}
+
+.sk-card:hover,
+.sk-card:focus-visible {
+  border-color: var(--primary);
+  transform: translateY(-1px);
+}
+
+.sk-card:hover .sk-card-label,
+.sk-card:focus-visible .sk-card-label {
+  color: var(--link-fg);
+}
+
+.sk-card.sk-tone-success { border-left-color: var(--sk-success-fg); }
+.sk-card.sk-tone-warning { border-left-color: var(--sk-warning-fg); }
+.sk-card.sk-tone-danger  { border-left-color: var(--sk-danger-fg); }
+.sk-card.sk-tone-neutral { border-left-color: var(--primary); }
+
+.sk-card-label {
+  color: var(--body-quiet-color);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.sk-card-value {
+  color: var(--body-loud-color);
+  font-size: 24px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.sk-card-money {
+  color: var(--body-medium-color);
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.sk-card-note {
+  color: var(--body-quiet-color);
+  font-size: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sk-card { transition: none; }
+  .sk-card:hover, .sk-card:focus-visible { transform: none; }
+}
+
+@media (max-width: 767px) {
+  .sk-dashboard {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
   }
 
-  #branding h1 {
-    font-size: 18px;
+  .sk-card-value {
+    font-size: 20px;
   }
 
-  .module,
-  .inline-group,
-  .submit-row {
-    border-radius: 10px;
+  .sk-brand-text {
+    font-size: 16px;
   }
 }
