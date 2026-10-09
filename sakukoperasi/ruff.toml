@@ -1,0 +1,6 @@
+# Lint minimal: error sintaks & pyflakes (import/variabel tak terpakai, nama tak terdefinisi).
+target-version = "py312"
+extend-exclude = ["core/migrations"]
+
+[lint]
+select = ["E9", "F"]

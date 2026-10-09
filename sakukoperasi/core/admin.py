@@ -195,7 +195,7 @@ class LoanAdmin(admin.ModelAdmin):
         formset.save_m2m()
 
     def get_queryset(self, request):
-        qs = super().get_queryset(request)
+        qs = super().get_queryset(request).with_totals()
         return qs.select_related('member', 'loan_rate_table', 'jaminan')
 
     @admin.display(description='No. Pinjaman', ordering='loan_number')

@@ -54,6 +54,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'rest_framework.authtoken',
+    'django_filters',
     'core.apps.CoreConfig',
 ]
 
@@ -99,6 +100,13 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.DjangoModelPermissions',
     ],
     'EXCEPTION_HANDLER': 'core.exceptions.exception_handler',
+    # Semua endpoint daftar dipaginasi (?page, ?page_size) dan mendukung ?search= / ?ordering= / filter field.
+    'DEFAULT_PAGINATION_CLASS': 'core.pagination.StandardPagination',
+    'DEFAULT_FILTER_BACKENDS': [
+        'django_filters.rest_framework.DjangoFilterBackend',
+        'rest_framework.filters.SearchFilter',
+        'rest_framework.filters.OrderingFilter',
+    ],
 }
 
 

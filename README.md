@@ -274,3 +274,33 @@ Posting bunga bulan lalu (aman dijalankan ulang, tidak dobel):
 | `POST /api/akun-simpanan-anggota/{id}/setor/` | `{"jenis": "pokok"\|"wajib", "amount": opsional}`; tanpa `amount` = bayar semua yang jatuh tempo |
 | `POST /api/akun-simpanan-anggota/{id}/proses-keluar/` | Pengembalian simpanan & tutup akun |
 | `/api/nominal-simpanan/` | Nominal pokok/wajib berversi |
+
+## Pagination, Filter & Pencarian API
+
+Semua endpoint daftar mengembalikan format berhalaman:
+
+```json
+{"count": 120, "next": "…?page=2", "previous": null, "results": [ … ]}
+```
+
+| Parameter | Contoh |
+|---|---|
+| Halaman | `?page=2&page_size=100` (default 50, maks 200) |
+| Pencarian | `?search=budi` |
+| Urutan | `?ordering=-loan_date` |
+| Rentang tanggal | `?loan_date_after=2026-01-01&loan_date_before=2026-03-31` |
+
+Filter per endpoint: anggota (`is_active`, `has_akun_simpanan`), jaminan (`member`, `jenis_penjamin`), pinjaman (`member`, `status`, `jaminan`, `loan_date_*`), pembayaran (`loan`, `payment_date_*`), denda (`loan`, `is_paid`, `penalty_date_*`), rekening (`nasabah`, `product`, `jenis`, `is_active`, `member_account`), transaksi simpanan (`rekening`, `transaction_type`, `transaction_date_*`), akun simpanan anggota (`member`, `is_active`).
+
+## CI & Development
+
+GitHub Actions (`.github/workflows/ci.yml`) berjalan di setiap PR dan push ke `main`: lint (ruff), `manage.py check`, cek migrasi tertinggal, seluruh test terhadap PostgreSQL 16, `check --deploy` mode production, dan build image Docker.
+
+Menjalankan hal yang sama secara lokal (dari folder `sakukoperasi/`, database PostgreSQL harus berjalan):
+
+```bash
+pip install -r requirements-dev.txt
+ruff check .
+DJANGO_DEBUG=true python manage.py makemigrations --check --dry-run
+DJANGO_DEBUG=true python manage.py test core
+```
