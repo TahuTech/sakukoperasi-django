@@ -1,8 +1,18 @@
-from rest_framework import filters, mixins, status, viewsets
+from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 
+from .filters import (
+    JaminanFilter,
+    LoanFilter,
+    LoanPaymentFilter,
+    LoanPenaltyFilter,
+    MemberFilter,
+    MemberSavingsAccountFilter,
+    SavingsFilter,
+    SavingsTransactionFilter,
+)
 from .member_savings import deposit, process_exit
 from .models import (
     Jaminan,
@@ -36,8 +46,11 @@ from .serializers import (
 
 
 class MemberViewSet(viewsets.ModelViewSet):
-    queryset = Member.objects.select_related('akun_simpanan').prefetch_related('nasabah__rekening__product').all()
+    queryset = Member.objects.select_related('akun_simpanan').prefetch_related('nasabah__rekening__product').order_by('id_member')
     serializer_class = MemberSerializer
+    filterset_class = MemberFilter
+    search_fields = ('id_member', 'id_week', 'id_month', 'name', 'phone_number')
+    ordering_fields = ('id_member', 'id_week', 'id_month', 'name')
 
     @action(detail=True, methods=['post'])
     def nonaktifkan(self, request, pk=None):
@@ -50,8 +63,10 @@ class MemberViewSet(viewsets.ModelViewSet):
 
 
 class JaminanViewSet(viewsets.ModelViewSet):
-    queryset = Jaminan.objects.select_related('member').all()
+    queryset = Jaminan.objects.select_related('member').order_by('-created_at')
     serializer_class = JaminanSerializer
+    filterset_class = JaminanFilter
+    search_fields = ('member__id_member', 'member__name', 'keterangan')
 
 
 class BaseLoanViewSet(viewsets.ModelViewSet):
@@ -59,9 +74,13 @@ class BaseLoanViewSet(viewsets.ModelViewSet):
 
     loan_type = None
     serializer_class = LoanSerializer
+    filterset_class = LoanFilter
+    search_fields = ('loan_number', 'member__id_member', 'member__name')
+    ordering_fields = ('loan_date', 'loan_number', 'status', 'created_at')
 
     def get_queryset(self):
-        return Loan.objects.select_related(
+        # with_totals: total bayar & denda dihitung dalam satu query, bukan per baris.
+        return Loan.objects.with_totals().select_related(
             'member', 'jaminan', 'loan_rate_table', 'loan_rate_table__loan_rule',
         ).filter(loan_type=self.loan_type)
 
@@ -80,14 +99,9 @@ class WeeklyLoanViewSet(BaseLoanViewSet):
 
 
 class LoanRecordViewSetMixin:
-    """Filter `?loan=<id>` dan isi `recorded_by` dari user yang login."""
+    """Isi `recorded_by` dari user yang login."""
 
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        loan_id = self.request.query_params.get('loan')
-        if loan_id:
-            queryset = queryset.filter(loan_id=loan_id)
-        return queryset
+    search_fields = ('loan__loan_number', 'loan__member__id_member', 'loan__member__name')
 
     def perform_create(self, serializer):
         serializer.save(recorded_by=self.request.user)
@@ -104,11 +118,13 @@ class LoanPaymentViewSet(
 
     queryset = LoanPayment.objects.select_related('loan', 'recorded_by')
     serializer_class = LoanPaymentSerializer
+    filterset_class = LoanPaymentFilter
 
 
 class LoanPenaltyViewSet(LoanRecordViewSetMixin, viewsets.ModelViewSet):
     queryset = LoanPenalty.objects.select_related('loan', 'recorded_by')
     serializer_class = LoanPenaltySerializer
+    filterset_class = LoanPenaltyFilter
 
 
 class SavingsProductViewSet(viewsets.ModelViewSet):
@@ -131,7 +147,6 @@ class NasabahViewSet(viewsets.ModelViewSet):
 
     queryset = Nasabah.objects.select_related('member')
     serializer_class = NasabahSerializer
-    filter_backends = (filters.SearchFilter,)
     search_fields = ('name', 'nik', 'phone_number', 'member__id_member')
 
 
@@ -146,7 +161,8 @@ class SavingsViewSet(
 
     queryset = Savings.objects.select_related('nasabah', 'product')
     serializer_class = SavingsSerializer
-    filter_backends = (filters.SearchFilter,)
+    filterset_class = SavingsFilter
+    ordering_fields = ('account_number', 'balance', 'opened_date')
     search_fields = ('account_number', 'nasabah__name', 'nasabah__phone_number', 'nasabah__member__id_member')
 
     @action(detail=True, methods=['post'])
@@ -168,15 +184,9 @@ class SavingsTransactionViewSet(
 
     queryset = SavingsTransaction.objects.select_related('savings__nasabah', 'recorded_by')
     serializer_class = SavingsTransactionSerializer
-    filter_backends = (filters.SearchFilter,)
+    filterset_class = SavingsTransactionFilter
     search_fields = ('savings__account_number', 'savings__nasabah__name')
-
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        account_id = self.request.query_params.get('rekening')
-        if account_id:
-            queryset = queryset.filter(savings_id=account_id)
-        return queryset
+    ordering_fields = ('transaction_date', 'created_at', 'amount')
 
     def perform_create(self, serializer):
         serializer.save(recorded_by=self.request.user)
@@ -201,7 +211,7 @@ class MemberSavingsAccountViewSet(
 
     queryset = MemberSavingsAccount.objects.select_related('member')
     serializer_class = MemberSavingsAccountSerializer
-    filter_backends = (filters.SearchFilter,)
+    filterset_class = MemberSavingsAccountFilter
     search_fields = ('account_number', 'member__name', 'member__id_member')
 
     def _require_perm(self, perm):

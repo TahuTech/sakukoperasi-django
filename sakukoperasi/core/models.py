@@ -4,8 +4,8 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.db import IntegrityError, models, transaction
-from django.db.models import IntegerField, Max, Q, Sum
-from django.db.models.functions import Cast
+from django.db.models import IntegerField, Max, OuterRef, Q, Subquery, Sum, Value
+from django.db.models.functions import Cast, Coalesce
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, RegexValidator
 from django.utils import timezone
@@ -247,6 +247,24 @@ class Jaminan(models.Model):
         verbose_name_plural = 'Jaminan'
 
 
+class LoanQuerySet(models.QuerySet):
+    def with_totals(self):
+        """Anotasi total pembayaran & denda belum dibayar (subquery, aman dari duplikasi join)."""
+        zero = Value(Decimal('0'), output_field=models.DecimalField(max_digits=15, decimal_places=2))
+
+        def total(model, extra=None):
+            rows = model.objects.filter(loan=OuterRef('pk'), **(extra or {}))
+            return Coalesce(
+                Subquery(rows.values('loan').annotate(total=Sum('amount')).values('total')[:1]),
+                zero,
+            )
+
+        return self.annotate(
+            annotated_total_paid=total(LoanPayment),
+            annotated_unpaid_penalties=total(LoanPenalty, {'is_paid': False}),
+        )
+
+
 class Loan(models.Model):
     """
     Pinjaman mingguan atau bulanan.
@@ -350,6 +368,8 @@ class Loan(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    objects = LoanQuerySet.as_manager()
+
     class Meta:
         ordering = ['-loan_date', '-created_at']
         verbose_name = 'Pinjaman'
@@ -399,6 +419,8 @@ class Loan(models.Model):
     def total_paid(self):
         if not self.pk:
             return Decimal('0')
+        if 'annotated_total_paid' in self.__dict__:
+            return self.annotated_total_paid
         return self.payments.aggregate(total=Sum('amount'))['total'] or Decimal('0')
 
     @property
@@ -409,6 +431,8 @@ class Loan(models.Model):
     def unpaid_penalties(self):
         if not self.pk:
             return Decimal('0')
+        if 'annotated_unpaid_penalties' in self.__dict__:
+            return self.annotated_unpaid_penalties
         return self.penalties.filter(is_paid=False).aggregate(total=Sum('amount'))['total'] or Decimal('0')
 
     # --- Jadwal & status ---

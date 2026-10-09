@@ -414,8 +414,8 @@ class LoanApiTests(LoanTestMixin, TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
-        self.assertEqual(len(self.client.get('/api/pinjaman-mingguan/').json()), 1)
-        self.assertEqual(len(self.client.get('/api/pinjaman-bulanan/').json()), 0)
+        self.assertEqual(len(self.client.get('/api/pinjaman-mingguan/').json()['results']), 1)
+        self.assertEqual(len(self.client.get('/api/pinjaman-bulanan/').json()['results']), 0)
 
     def test_second_active_loan_returns_400(self):
         self.create_weekly()
@@ -452,7 +452,7 @@ class LoanApiTests(LoanTestMixin, TestCase):
         response = self.client.patch(f'/api/denda-pinjaman/{penalty_id}/', {'is_paid': True}, format='json')
         self.assertEqual(response.status_code, 200, response.content)
 
-        self.assertEqual(len(self.client.get(f'/api/pembayaran-pinjaman/?loan={loan.pk}').json()), 1)
+        self.assertEqual(len(self.client.get(f'/api/pembayaran-pinjaman/?loan={loan.pk}').json()['results']), 1)
 
     def test_delete_member_with_loan_returns_409_and_can_deactivate(self):
         self.create_weekly()
@@ -827,9 +827,9 @@ class SavingsApiTests(TestCase):
         create_account('BUKU-0043', name='Siti Aminah')
 
     def test_search_account_by_name(self):
-        results = self.client.get('/api/rekening-simpanan/', {'search': 'budi'}).json()
+        results = self.client.get('/api/rekening-simpanan/', {'search': 'budi'}).json()['results']
         self.assertEqual([r['account_number'] for r in results], ['BUKU-0042'])
-        results = self.client.get('/api/nasabah/', {'search': 'siti'}).json()
+        results = self.client.get('/api/nasabah/', {'search': 'siti'}).json()['results']
         self.assertEqual([r['name'] for r in results], ['Siti Aminah'])
 
     def test_deposit_withdraw_and_history(self):
@@ -853,7 +853,7 @@ class SavingsApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
-        history = self.client.get('/api/transaksi-simpanan/', {'search': 'budi'}).json()
+        history = self.client.get('/api/transaksi-simpanan/', {'search': 'budi'}).json()['results']
         self.assertEqual(len(history), 1)
         self.assertEqual(self.client.delete(f"/api/transaksi-simpanan/{history[0]['id']}/").status_code, 405)
 
@@ -1022,7 +1022,7 @@ class MemberSavingsApiTests(MemberSavingsTestMixin, TestCase):
         self.client.force_authenticate(get_user_model().objects.create_superuser('admin', 'a@a.id', 'Rahasia-Kuat-123'))
 
     def test_search_and_summary(self):
-        data = self.client.get('/api/akun-simpanan-anggota/', {'search': 'budi'}).json()
+        data = self.client.get('/api/akun-simpanan-anggota/', {'search': 'budi'}).json()['results']
         self.assertEqual([a['account_number'] for a in data], ['SA-12'])
         self.assertEqual(set(data[0]['ringkasan']), {'pokok', 'wajib'})
 
@@ -1072,3 +1072,60 @@ class MemberSavingsAdminTests(MemberSavingsTestMixin, TestCase):
         response = self.client.get('/admin/member/member/', {'akun_simpanan': 'belum'})
         self.assertContains(response, 'Belum Punya')
         self.assertNotContains(response, '>Budi<')
+
+
+class ApiPaginationFilterTests(LoanTestMixin, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.client = APIClient()
+        self.client.force_authenticate(get_user_model().objects.create_superuser('admin', 'a@a.id', 'Rahasia-Kuat-123'))
+
+    def test_list_is_paginated(self):
+        for i in range(3):
+            create_member(f'P{i:03d}')
+        data = self.client.get('/api/members/', {'page_size': 2}).json()
+        self.assertEqual(data['count'], 4)
+        self.assertEqual(len(data['results']), 2)
+        self.assertIsNotNone(data['next'])
+
+    def test_member_filters(self):
+        create_member('X001', name='Nonaktif').deactivate()
+        data = self.client.get('/api/members/', {'is_active': 'false'}).json()['results']
+        self.assertEqual([m['id_member'] for m in data], ['X001'])
+        data = self.client.get('/api/members/', {'has_akun_simpanan': 'false', 'search': 'nonaktif'}).json()['results']
+        self.assertEqual(len(data), 1)
+
+    def test_loan_filters_and_totals(self):
+        loan = self.create_weekly(loan_date=date(2026, 1, 1))
+        LoanPayment.objects.create(loan=loan, amount=Decimal('100000'), payment_date=date(2026, 1, 2))
+        LoanPenalty.objects.create(loan=loan, amount=Decimal('5000'), reason='Telat')
+        loan.refresh_from_db()  # status diperbarui oleh pembayaran/denda
+
+        data = self.client.get('/api/pinjaman-mingguan/', {'loan_date_after': '2026-01-01', 'status': loan.status}).json()
+        self.assertEqual(data['count'], 1)
+        row = data['results'][0]
+        self.assertEqual((row['total_paid'], row['unpaid_penalties']), ('100000.00', '5000.00'))
+
+        self.assertEqual(self.client.get('/api/pinjaman-mingguan/', {'loan_date_before': '2025-12-31'}).json()['count'], 0)
+        self.assertEqual(self.client.get('/api/denda-pinjaman/', {'is_paid': 'false'}).json()['count'], 1)
+
+    def test_loan_list_query_count_does_not_grow_per_row(self):
+        for i in range(5):
+            member = create_member(f'Q{i:03d}')
+            loan = Loan.objects.create(member=member, loan_rate_table=self.weekly_rate, loan_date=date(2026, 1, 1))
+            LoanPayment.objects.create(loan=loan, amount=Decimal('1000'), payment_date=date(2026, 1, 2))
+        # auth/session + count + page; tanpa query tambahan per pinjaman
+        with self.assertNumQueries(2):
+            response = self.client.get('/api/pinjaman-mingguan/')
+        self.assertEqual(response.json()['count'], 5)
+
+    def test_savings_transaction_filters(self):
+        account = create_account()
+        add_transaction(account, DEPOSIT, '1000', on_date=date(2026, 2, 1))
+        add_transaction(account, WITHDRAWAL, '500', on_date=date(2026, 3, 1))
+        url = '/api/transaksi-simpanan/'
+        self.assertEqual(self.client.get(url, {'rekening': account.pk}).json()['count'], 2)
+        self.assertEqual(self.client.get(url, {'transaction_type': 'withdrawal'}).json()['count'], 1)
+        self.assertEqual(self.client.get(url, {'transaction_date_before': '2026-02-15'}).json()['count'], 1)
+        ordered = self.client.get(url, {'ordering': 'transaction_date'}).json()['results']
+        self.assertEqual([r['transaction_type'] for r in ordered], ['deposit', 'withdrawal'])
